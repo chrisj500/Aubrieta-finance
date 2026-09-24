@@ -11,10 +11,10 @@ permissions:
 
 jobs:
   import-upstream:
-    if: github.repository == 'chrisj500/Verbena-finance'
+    if: github.repository == 'chrisj500/Aubrieta-finance'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Verbena
+      - name: Checkout Aubrieta
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
@@ -32,14 +32,13 @@ jobs:
             --exclude='README.md' \
             /tmp/open-finance/ ./
 
-          mkdir -p docs/upstream .github/workflows
+          mkdir -p docs/upstream
           cp /tmp/open-finance/README.md docs/upstream/OPEN_FINANCE_README.md
-          cp /tmp/open-finance/.github/workflows/ci.yml .github/workflows/ci.yml
 
           cat > UPSTREAM.md <<'UPSTREAM'
           # Upstream provenance
 
-          Verbena Finance began from a source snapshot of the MIT-licensed
+          Aubrieta began from a source snapshot of the MIT-licensed
           [DeseretSaint/open-finance](https://github.com/DeseretSaint/open-finance) project.
 
           - Upstream repository: `DeseretSaint/open-finance`
@@ -47,15 +46,13 @@ jobs:
           - Upstream version at import: `v0.3.49`
           - License: MIT (see `LICENSE`)
 
-          Verbena is maintained as an independent private household-finance project.
-          Upstream code will be selectively incorporated rather than automatically merged.
+          Aubrieta is maintained as an independent open-source personal-finance project.
+          Upstream changes will be selectively incorporated rather than automatically merged.
           UPSTREAM
-
-          rm -f .github/workflows/bootstrap-open-finance.yml
 
       - name: Commit imported baseline
         run: |
-          git config user.name "Verbena Bootstrap"
+          git config user.name "Aubrieta Bootstrap"
           git config user.email "actions@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then
