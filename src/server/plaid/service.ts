@@ -5,6 +5,8 @@ import { getDb, type Db } from "@/server/db/adapter";
 import type { PlaidClient, PlaidCreds, PlaidEnvironment } from "./adapter";
 import { realPlaidClient } from "./real";
 import { createSyncService } from "./sync";
+import { createPlaidProvider, legacyAccountType, type PlaidConnectionSecret } from "@/server/providers/plaid";
+import { ensureAccountProviderRef, ensureProviderConnection } from "@/server/providers/connections";
 
 export interface PlaidCredentialRow {
   id: string;
@@ -39,6 +41,79 @@ export function createPlaidService(db: Db = getDb(), clientFactory: (creds: Plai
       },
       row,
     };
+  }
+
+  async function syncProviderAccounts(input: {
+    userId: string;
+    itemRowId: string;
+    externalItemId: string | null;
+    institutionId: string | null;
+    institutionName: string | null;
+    creds: PlaidCreds;
+    client: PlaidClient;
+    accessToken: string;
+  }): Promise<number> {
+    const provider = createPlaidProvider(input.client);
+    const connectionId = await ensureProviderConnection(db, {
+      userId: input.userId,
+      provider,
+      externalConnectionId: input.externalItemId,
+      institutionExternalId: input.institutionId,
+      institutionName: input.institutionName,
+      status: "active",
+      legacyPlaidItemId: input.itemRowId,
+    });
+    const secret: PlaidConnectionSecret = { creds: input.creds, accessToken: input.accessToken };
+    const accounts = await provider.listAccounts(secret);
+
+    for (const a of accounts) {
+      const legacyType = legacyAccountType(a.type);
+      await db.run(
+        `INSERT INTO accounts (id, user_id, item_id, plaid_account_id, name, official_name, type, subtype, mask,
+                               current_balance_cents, available_balance_cents, currency, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(plaid_account_id) DO UPDATE SET
+           item_id = excluded.item_id,
+           name = CASE WHEN accounts.name_override IS NULL THEN excluded.name ELSE accounts.name END,
+           official_name = excluded.official_name,
+           type = CASE WHEN accounts.type_override = 0 THEN excluded.type ELSE accounts.type END,
+           subtype = excluded.subtype,
+           mask = excluded.mask,
+           current_balance_cents = excluded.current_balance_cents,
+           available_balance_cents = excluded.available_balance_cents,
+           currency = excluded.currency,
+           deleted_at = NULL`,
+        randomUUID(),
+        input.userId,
+        input.itemRowId,
+        a.externalId,
+        a.name,
+        a.officialName ?? null,
+        legacyType,
+        a.subtype ?? null,
+        a.mask ?? null,
+        a.currentBalanceMinor ?? null,
+        a.availableBalanceMinor ?? null,
+        a.currency,
+        now()
+      );
+      const row = await db.get<{ id: string }>(
+        "SELECT id FROM accounts WHERE plaid_account_id = ? AND user_id = ?",
+        a.externalId,
+        input.userId
+      );
+      if (row) {
+        await ensureAccountProviderRef(db, {
+          userId: input.userId,
+          accountId: row.id,
+          connectionId,
+          provider: "plaid",
+          externalAccountId: a.externalId,
+        });
+      }
+    }
+
+    return accounts.length;
   }
 
   return {
@@ -142,36 +217,23 @@ export function createPlaidService(db: Db = getDb(), clientFactory: (creds: Plai
             existing.id,
             userId
           );
-          // Re-pull accounts so balances are fresh.
+          // Re-pull accounts so balances and provider-neutral references are fresh.
+          let accountCount = 0;
           try {
-            const accounts = await client.getAccounts(creds, accessToken);
-            for (const a of accounts) {
-              await db.run(
-                `INSERT INTO accounts (id, user_id, item_id, plaid_account_id, name, official_name, type, subtype, mask,
-                                       current_balance_cents, available_balance_cents, currency, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(plaid_account_id) DO UPDATE SET
-                   name = excluded.name, official_name = excluded.official_name, current_balance_cents = excluded.current_balance_cents,
-                   available_balance_cents = excluded.available_balance_cents, currency = excluded.currency, updated_at = excluded.updated_at`,
-                randomUUID(),
-                userId,
-                existing.id,
-                a.id,
-                a.name,
-                a.officialName,
-                a.type,
-                a.subtype,
-                a.mask,
-                a.currentBalanceCents,
-                a.availableBalanceCents,
-                a.currency,
-                now()
-              );
-            }
+            accountCount = await syncProviderAccounts({
+              userId,
+              itemRowId: existing.id,
+              externalItemId: itemId,
+              institutionId,
+              institutionName,
+              creds,
+              client,
+              accessToken,
+            });
           } catch {
-            // balances refresh is best-effort
+            // Account refresh is best-effort in update mode.
           }
-          return { itemId: existing.id, accountCount: 0, synced: 0, updated: true };
+          return { itemId: existing.id, accountCount, synced: 0, updated: true };
         }
         // If the item row is missing, fall through and create a new one.
       }
@@ -190,27 +252,16 @@ export function createPlaidService(db: Db = getDb(), clientFactory: (creds: Plai
         now()
       );
 
-      const accounts = await client.getAccounts(creds, accessToken);
-      for (const a of accounts) {
-        await db.run(
-          `INSERT INTO accounts (id, user_id, item_id, plaid_account_id, name, official_name, type, subtype, mask,
-                                 current_balance_cents, available_balance_cents, currency, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          randomUUID(),
-          userId,
-          itemRowId,
-          a.id,
-          a.name,
-          a.officialName,
-          a.type,
-          a.subtype,
-          a.mask,
-          a.currentBalanceCents,
-          a.availableBalanceCents,
-          a.currency,
-          now()
-        );
-      }
+      const accountCount = await syncProviderAccounts({
+        userId,
+        itemRowId,
+        externalItemId: itemId,
+        institutionId,
+        institutionName,
+        creds,
+        client,
+        accessToken,
+      });
 
       // Import the transaction history right away so the wizard's "link a
       // bank" step populates the activity log immediately (P23). Best-effort:
@@ -223,7 +274,7 @@ export function createPlaidService(db: Db = getDb(), clientFactory: (creds: Plai
         synced = 0;
       }
 
-      return { itemId: itemRowId, accountCount: accounts.length, synced };
+      return { itemId: itemRowId, accountCount, synced };
     },
 
     async listItems(userId: string) {
@@ -264,6 +315,18 @@ export function createPlaidService(db: Db = getDb(), clientFactory: (creds: Plai
       }
 
       await db.transaction(async () => {
+        const connection = await db.get<{ id: string }>(
+          "SELECT id FROM provider_connections WHERE legacy_plaid_item_id = ? AND user_id = ?",
+          itemRowId,
+          userId
+        );
+        if (connection) {
+          await db.run(
+            "DELETE FROM bills WHERE provider_liability_id IN (SELECT id FROM liabilities WHERE connection_id = ?)",
+            connection.id
+          );
+          await db.run("DELETE FROM provider_connections WHERE id = ?", connection.id);
+        }
         await db.run("DELETE FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?)", itemRowId);
         await db.run("DELETE FROM balance_history WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?)", itemRowId);
         await db.run("DELETE FROM accounts WHERE item_id = ?", itemRowId);
