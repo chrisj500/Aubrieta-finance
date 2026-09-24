@@ -1,6 +1,6 @@
 # Upstream provenance
 
-Verbena Finance is an independent private household-finance project.
+Aubrieta is an independent private household-finance project.
 
 Its initial application foundation is based on the MIT-licensed Open Finance project:
 
@@ -12,4 +12,4 @@ Its initial application foundation is based on the MIT-licensed Open Finance pro
 
 The upstream LICENSE and copyright notices must be preserved for imported code.
 
-Verbena does not automatically track or merge the upstream branch. Upstream changes are reviewed and selectively incorporated so that provider-neutral architecture, household privacy, and Verbena-specific behavior remain authoritative.
+Aubrieta does not automatically track or merge the upstream branch. Upstream changes are reviewed and selectively incorporated so that provider-neutral architecture, household privacy, and Aubrieta-specific behavior remain authoritative.
