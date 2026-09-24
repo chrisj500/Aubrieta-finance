@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 /**
- * Open Finance mobile app (P8a connected + P8b solo).
+ * Aubrieta mobile app (P8a connected + P8b solo).
  *
  * The webview loads either:
  *   - CONNECTED: CAP_SERVER_URL is set at build time → the webview loads the
@@ -16,8 +16,8 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * for user-entered LAN/Tailscale hub hosts; docs steer to Tailscale/TLS.
  */
 const config: CapacitorConfig = {
-  appId: "com.openfinance.app",
-  appName: "Open Finance",
+  appId: "com.aubrieta.finance",
+  appName: "Aubrieta",
   webDir: process.env.CAP_WEB_DIR ?? "dist/mobile",
   server: process.env.CAP_SERVER_URL
     ? { url: process.env.CAP_SERVER_URL, cleartext: true }
