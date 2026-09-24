@@ -28,11 +28,7 @@ jobs:
 
       - name: Patch vulnerable production dependencies
         run: |
-          pnpm up next@15.5.25 nodemailer@9.1.1 @modelcontextprotocol/sdk@1.30.1 sharp@0.35.4
-          pnpm pkg set "pnpm.overrides.browserslist=4.28.7"
-          pnpm pkg set "pnpm.overrides.fast-uri=4.1.3"
-          pnpm pkg set "pnpm.overrides.qs=6.16.0"
-          pnpm pkg set "pnpm.overrides.hono=4.13.5"
+          pnpm up next@15.5.25 eslint-config-next@15.5.25 nodemailer@9.1.1 @modelcontextprotocol/sdk@1.30.1 sharp@0.35.4
           pnpm install
 
       - name: Production dependency audit
@@ -63,7 +59,7 @@ jobs:
         run: |
           git config user.name "Aubrieta Security Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add package.json pnpm-lock.yaml
+          git add package.json pnpm-lock.yaml pnpm-workspace.yaml
           if git diff --cached --quiet; then
             echo "No dependency changes to commit"
             exit 0
