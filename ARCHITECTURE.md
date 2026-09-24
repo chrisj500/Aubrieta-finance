@@ -1,8 +1,8 @@
-# Verbena architecture
+# Aubrieta architecture
 
 ## Product boundary
 
-Verbena owns the canonical household-finance model. Aggregation vendors are adapters, not the source of truth.
+Aubrieta owns the canonical household-finance model. Aggregation vendors are adapters, not the source of truth.
 
 The application must never require Plaid-specific identifiers outside the provider-integration layer.
 
@@ -27,7 +27,7 @@ The application must never require Plaid-specific identifiers outside the provid
 - NotificationPreference
 - NotificationEvent
 
-All durable records use Verbena-owned IDs. Provider IDs are stored as external references.
+All durable records use Aubrieta-owned IDs. Provider IDs are stored as external references.
 
 ## Provider layer
 
@@ -61,9 +61,9 @@ Provider capability detection must drive the UI and sync jobs.
 
 A household may use different providers for different institutions.
 
-An account can change providers without losing its Verbena account identity or history.
+An account can change providers without losing its Aubrieta account identity or history.
 
-Where duplicate provider connections exist, Verbena must reconcile rather than duplicate accounts.
+Where duplicate provider connections exist, Aubrieta must reconcile rather than duplicate accounts.
 
 ## Bills engine
 
@@ -71,7 +71,7 @@ Bill facts are merged using this priority:
 
 1. Authoritative liability/statement data from the provider.
 2. Provider-supplied recurring stream data.
-3. Verbena recurring-transaction detection.
+3. Aubrieta recurring-transaction detection.
 4. User-entered or user-overridden schedule.
 
 Each bill occurrence records provenance and confidence.
@@ -107,7 +107,7 @@ Channels can include:
 
 ## Household model
 
-Verbena is not a public SaaS product.
+Aubrieta is not a public SaaS product.
 
 - Public registration is disabled.
 - The first user becomes household administrator.
@@ -131,6 +131,6 @@ Verbena is not a public SaaS product.
 
 Open Finance is a source foundation, not a permanent architectural constraint.
 
-Upstream changes are reviewed and selectively incorporated. We do not automatically merge upstream main into Verbena.
+Upstream changes are reviewed and selectively incorporated. We do not automatically merge upstream main into Aubrieta.
 
 The canonical upstream provenance is documented in UPSTREAM.md.
