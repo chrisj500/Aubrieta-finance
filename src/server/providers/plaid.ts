@@ -100,6 +100,7 @@ export function createPlaidProvider(client: PlaidClient): FinancialProvider {
 
     async getLiabilities(connectionSecret): Promise<ProviderLiability[]> {
       const { creds, accessToken } = asPlaidSecret(connectionSecret);
+      if (!client.getLiabilities) return [];
       return (await client.getLiabilities(creds, accessToken)).map((l) => ({
         accountExternalId: l.accountId,
         kind: l.kind,
