@@ -82,7 +82,7 @@ export interface PlaidClient {
     start: string,
     end: string
   ): Promise<PlaidTransaction[]>;
-  getLiabilities(creds: PlaidCreds, accessToken: string): Promise<PlaidLiability[]>;
+  getLiabilities?(creds: PlaidCreds, accessToken: string): Promise<PlaidLiability[]>;
   removeItem(creds: PlaidCreds, accessToken: string): Promise<void>;
   testCredentials(creds: PlaidCreds): Promise<PlaidTestResult>;
 }
