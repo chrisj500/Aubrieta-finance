@@ -49,7 +49,7 @@
     "recharts": "^3.10.1",
     "serwist": "^9.5.12",
     "sql.js": "^1.14.2",
-    "tailwind-merge": "^3.6.0",
+    "tailwind-merge": "^3.7.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
