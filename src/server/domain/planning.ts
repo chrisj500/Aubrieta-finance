@@ -19,6 +19,9 @@ export interface BillRow {
   account_id: string | null;
   active: boolean;
   notes: string | null;
+  provider_liability_id: string | null;
+  source: string;
+  source_confidence: string;
   created_at: string;
   updated_at: string;
 }
@@ -26,6 +29,13 @@ export interface BillRow {
 export interface BillWithNames extends BillRow {
   category_name: string | null;
   account_name: string | null;
+  liability_kind: string | null;
+  minimum_payment_cents: number | null;
+  statement_balance_cents: number | null;
+  statement_date: string | null;
+  next_monthly_payment_cents: number | null;
+  liability_apr_bps: number | null;
+  liability_raw_status: string | null;
 }
 
 export interface DebtRow {
@@ -237,10 +247,18 @@ export function amortize(
 }
 
 export function createPlanningService(db: Db = getDb()) {
-  const BILL_SELECT = `SELECT b.*, c.name AS category_name, a.name AS account_name
+  const BILL_SELECT = `SELECT b.*, c.name AS category_name, a.name AS account_name,
+            l.kind AS liability_kind,
+            l.minimum_payment_cents,
+            l.statement_balance_cents,
+            l.statement_date,
+            l.next_monthly_payment_cents,
+            l.apr_bps AS liability_apr_bps,
+            l.raw_status AS liability_raw_status
      FROM bills b
      LEFT JOIN categories c ON c.id = b.category_id
-     LEFT JOIN accounts a ON a.id = b.account_id`;
+     LEFT JOIN accounts a ON a.id = b.account_id
+     LEFT JOIN liabilities l ON l.id = b.provider_liability_id`;
 
   /** Raw row from SQLite: active comes back as 0/1. */
   type BillDbRow = Omit<BillWithNames, "active"> & { active: number | boolean };
@@ -835,14 +853,11 @@ export function createPlanningService(db: Db = getDb()) {
     }> {
       const today = todayISO();
       const horizon = until && /^\d{4}-\d{2}-\d{2}$/.test(until) ? until : addDaysISO(today, days);
-      const bills = await db.all<BillWithNames>(
-        `SELECT b.*, c.name AS category_name, a.name AS account_name
-           FROM bills b
-           LEFT JOIN categories c ON c.id = b.category_id
-           LEFT JOIN accounts a ON a.id = b.account_id
-          WHERE b.user_id = ? AND b.active = 1 AND b.next_due_date IS NOT NULL`,
+      const billRows = await db.all<BillDbRow>(
+        `${BILL_SELECT} WHERE b.user_id = ? AND b.active = 1 AND b.next_due_date IS NOT NULL`,
         userId
       );
+      const bills = billRows.map(toBillRow);
       const upcoming = bills
         .filter((b) => b.next_due_date! >= today && b.next_due_date! <= horizon)
         .sort((a, b) => a.next_due_date!.localeCompare(b.next_due_date!));

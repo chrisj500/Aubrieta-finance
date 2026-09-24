@@ -12,6 +12,7 @@ import {
   type PlaidAccount,
   PlaidClient,
   PlaidCreds,
+  PlaidLiability,
   PlaidSyncResult,
   PlaidTestResult,
   PlaidTransaction,
@@ -78,19 +79,24 @@ function mapError(e: unknown): PlaidTestResult {
 }
 
 export const realPlaidClient: PlaidClient = {
-  async createLinkToken(creds, clientUserId) {
+  async createLinkToken(creds, clientUserId, accessToken) {
     const client = clientFor(creds);
     const req: LinkTokenCreateRequest = {
-      client_name: "Open Finance",
+      client_name: "Aubrieta",
       language: "en",
       country_codes: [CountryCode.Us],
       user: { client_user_id: clientUserId },
-      products: [Products.Transactions],
-      // Request the FULL history window Plaid offers (up to 24 months / 730
-      // days). Plaid defaults to only 90 days of transaction history when
-      // days_requested is omitted — which surfaces as a hard ~3-month floor
-      // in the app even though Plaid has more data for the institution.
-      transactions: { days_requested: 730 },
+      // Update mode re-authenticates an existing Item; Plaid recommends
+      // omitting products there. For a new Item, Transactions remains the
+      // required product while Liabilities is consented without restricting
+      // institution availability.
+      ...(accessToken
+        ? { access_token: accessToken }
+        : {
+            products: [Products.Transactions],
+            additional_consented_products: [Products.Liabilities],
+            transactions: { days_requested: 730 },
+          }),
     };
     const res = await client.linkTokenCreate(req);
     return res.data.link_token;
@@ -163,6 +169,68 @@ export const realPlaidClient: PlaidClient = {
     }
 
     return { added, modified, removed, nextCursor, hasMore: false };
+  },
+
+  async getLiabilities(creds, accessToken) {
+    const client = clientFor(creds);
+    const res = await client.liabilitiesGet({ access_token: accessToken });
+    const out: PlaidLiability[] = [];
+    const liabilities = res.data.liabilities;
+
+    for (const credit of liabilities.credit ?? []) {
+      if (!credit.account_id) continue;
+      const aprs = credit.aprs ?? [];
+      const purchaseApr = aprs.find((a) => a.apr_type === "purchase_apr") ?? aprs[0];
+      out.push({
+        accountId: credit.account_id,
+        kind: "credit_card",
+        nextPaymentDueDate: credit.next_payment_due_date ?? null,
+        minimumPaymentCents: credit.minimum_payment_amount == null ? null : cents(credit.minimum_payment_amount),
+        statementBalanceCents: credit.last_statement_balance == null ? null : cents(credit.last_statement_balance),
+        statementDate: credit.last_statement_issue_date ?? null,
+        nextMonthlyPaymentCents: null,
+        aprBps: purchaseApr?.apr_percentage == null ? null : Math.round(purchaseApr.apr_percentage * 100),
+        lastPaymentAmountCents: credit.last_payment_amount == null ? null : cents(credit.last_payment_amount),
+        lastPaymentDate: credit.last_payment_date ?? null,
+        rawStatus: credit.is_overdue == null ? null : credit.is_overdue ? "overdue" : "current",
+      });
+    }
+
+    for (const mortgage of liabilities.mortgage ?? []) {
+      out.push({
+        accountId: mortgage.account_id,
+        kind: "mortgage",
+        nextPaymentDueDate: mortgage.next_payment_due_date ?? null,
+        minimumPaymentCents: null,
+        statementBalanceCents: null,
+        statementDate: null,
+        nextMonthlyPaymentCents: mortgage.next_monthly_payment == null ? null : cents(mortgage.next_monthly_payment),
+        // Plaid exposes mortgage interest rate percentage rather than APR.
+        aprBps: mortgage.interest_rate?.percentage == null ? null : Math.round(mortgage.interest_rate.percentage * 100),
+        lastPaymentAmountCents: mortgage.last_payment_amount == null ? null : cents(mortgage.last_payment_amount),
+        lastPaymentDate: mortgage.last_payment_date ?? null,
+        rawStatus: mortgage.past_due_amount && mortgage.past_due_amount > 0 ? "past_due" : "current",
+      });
+    }
+
+    for (const student of liabilities.student ?? []) {
+      if (!student.account_id) continue;
+      out.push({
+        accountId: student.account_id,
+        kind: "student_loan",
+        nextPaymentDueDate: student.next_payment_due_date ?? null,
+        minimumPaymentCents: student.minimum_payment_amount == null ? null : cents(student.minimum_payment_amount),
+        statementBalanceCents: student.last_statement_balance == null ? null : cents(student.last_statement_balance),
+        statementDate: student.last_statement_issue_date ?? null,
+        nextMonthlyPaymentCents: null,
+        aprBps: student.interest_rate_percentage == null ? null : Math.round(student.interest_rate_percentage * 100),
+        lastPaymentAmountCents: student.last_payment_amount == null ? null : cents(student.last_payment_amount),
+        lastPaymentDate: student.last_payment_date ?? null,
+        rawStatus: student.loan_status?.type ?? (student.is_overdue ? "overdue" : "current"),
+      });
+    }
+
+    return out;
   },
 
   async removeItem(creds, accessToken) {

@@ -7,6 +7,9 @@ import { realPlaidClient } from "./real";
 import { createCategoriesService } from "@/server/domain/categories";
 import { createIngestService } from "@/server/domain/ingest";
 import { markLinkedTransfers } from "@/server/domain/transfers";
+import { createPlaidProvider, legacyAccountType, type PlaidConnectionSecret } from "@/server/providers/plaid";
+import { ensureProviderConnection } from "@/server/providers/connections";
+import { syncProviderLiabilities } from "@/server/domain/liabilities";
 
 function now(): string {
   return new Date().toISOString();
@@ -60,6 +63,17 @@ export function createSyncService(db: Db = getDb(), clientFactory: (creds: Plaid
     };
     const client = clientFactory(creds);
     const accessToken = decrypt(item.access_token_enc, aad(userId, item.id));
+    const provider = createPlaidProvider(client);
+    const providerSecret: PlaidConnectionSecret = { creds, accessToken };
+    const connectionId = await ensureProviderConnection(db, {
+      userId,
+      provider,
+      externalConnectionId: item.plaid_item_id,
+      institutionExternalId: null,
+      institutionName: item.institution_name,
+      status: "active",
+      legacyPlaidItemId: item.id,
+    });
 
     const accountRows = await db.all<{ id: string; plaid_account_id: string | null; type: string | null; type_override: number; hidden: number }>(
       "SELECT id, plaid_account_id, type, type_override, hidden FROM accounts WHERE item_id = ?",
@@ -147,19 +161,20 @@ export function createSyncService(db: Db = getDb(), clientFactory: (creds: Plaid
 
     await markLinkedTransfers(db, userId);
 
-    // Refresh balances + one balance_history point per account.
-    const freshAccounts = await client.getAccounts(creds, accessToken);
+    // Refresh balances through the provider-neutral account contract.
+    const freshAccounts = await provider.listAccounts(providerSecret);
     for (const a of freshAccounts) {
-      const rowId = plaidToRow.get(a.id);
+      const rowId = plaidToRow.get(a.externalId);
       if (!rowId) continue;
-      const balance = a.currentBalanceCents ?? a.availableBalanceCents ?? 0;
-      const balanceSign = a.type === "credit" || a.type === "loan" ? -1 : 1;
+      const balance = a.currentBalanceMinor ?? a.availableBalanceMinor ?? 0;
+      const legacyType = legacyAccountType(a.type);
+      const balanceSign = legacyType === "credit" || legacyType === "loan" ? -1 : 1;
       await db.run(
-      "UPDATE accounts SET current_balance_cents = ?, available_balance_cents = ?, currency = ? WHERE id = ?",
-      a.currentBalanceCents == null ? null : a.currentBalanceCents * balanceSign,
-      a.availableBalanceCents == null ? null : a.availableBalanceCents * balanceSign,
-      a.currency,
-      rowId
+        "UPDATE accounts SET current_balance_cents = ?, available_balance_cents = ?, currency = ? WHERE id = ?",
+        a.currentBalanceMinor == null ? null : a.currentBalanceMinor * balanceSign,
+        a.availableBalanceMinor == null ? null : a.availableBalanceMinor * balanceSign,
+        a.currency,
+        rowId
       );
       await db.run(
         `INSERT INTO balance_history (id, account_id, date, balance_cents) VALUES (?, ?, ?, ?)
@@ -171,11 +186,29 @@ export function createSyncService(db: Db = getDb(), clientFactory: (creds: Plaid
       );
     }
 
+    // Liabilities are best-effort: Items without applicable credit/loan
+    // accounts can reject liabilities/get. Do not fail transaction sync for
+    // an unsupported product, but when data is available it is authoritative.
+    if (provider.getLiabilities) {
+      try {
+        const liabilities = await provider.getLiabilities(providerSecret);
+        await syncProviderLiabilities(db, userId, connectionId, "plaid", liabilities);
+      } catch {
+        // Keep the last known liability snapshot; a later sync can refresh it.
+      }
+    }
+
+    const syncedAt = now();
     await db.run(
       "UPDATE plaid_items SET cursor = ?, last_sync_at = ?, status = 'active' WHERE id = ?",
       cursor,
-      now(),
+      syncedAt,
       itemRowId
+    );
+    await db.run(
+      "UPDATE provider_connections SET status = 'active', updated_at = ? WHERE id = ?",
+      syncedAt,
+      connectionId
     );
 
     return { itemId: itemRowId, institutionName: item.institution_name, added, modified, removed, ok: true };

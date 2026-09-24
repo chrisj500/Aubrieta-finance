@@ -48,6 +48,20 @@ export interface PlaidSyncResult {
   hasMore: boolean;
 }
 
+export interface PlaidLiability {
+  accountId: string;
+  kind: "credit_card" | "mortgage" | "student_loan";
+  nextPaymentDueDate: string | null;
+  minimumPaymentCents: number | null;
+  statementBalanceCents: number | null;
+  statementDate: string | null;
+  nextMonthlyPaymentCents: number | null;
+  aprBps: number | null;
+  lastPaymentAmountCents: number | null;
+  lastPaymentDate: string | null;
+  rawStatus: string | null;
+}
+
 /** All Plaid calls go through this interface so tests can inject a fake and
  *  the Android native plugin can implement the same surface in P8b. */
 export interface PlaidClient {
@@ -68,6 +82,7 @@ export interface PlaidClient {
     start: string,
     end: string
   ): Promise<PlaidTransaction[]>;
+  getLiabilities?(creds: PlaidCreds, accessToken: string): Promise<PlaidLiability[]>;
   removeItem(creds: PlaidCreds, accessToken: string): Promise<void>;
   testCredentials(creds: PlaidCreds): Promise<PlaidTestResult>;
 }
