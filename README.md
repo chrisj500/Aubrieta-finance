@@ -1,6 +1,6 @@
-# Verbena Finance
+# Aubrieta
 
-Verbena is a private, household-focused personal finance platform designed to recreate and improve on the most useful capabilities of classic Mint while remaining provider-neutral and self-hosted.
+Aubrieta is a private, household-focused personal finance platform designed to recreate and improve on the most useful capabilities of classic Mint while remaining provider-neutral and self-hosted.
 
 ## Core goals
 
@@ -15,7 +15,7 @@ Verbena is a private, household-focused personal finance platform designed to re
 
 ## Foundation
 
-Verbena is being built from a pinned snapshot of the MIT-licensed [Open Finance](https://github.com/DeseretSaint/open-finance) project, with substantial changes to aggregation, bills, household identity, and product experience.
+Aubrieta is being built from a pinned snapshot of the MIT-licensed [Open Finance](https://github.com/DeseretSaint/open-finance) project, with substantial changes to aggregation, bills, household identity, and product experience.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) and [UPSTREAM.md](UPSTREAM.md).
 
