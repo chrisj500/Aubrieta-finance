@@ -1,0 +1,145 @@
+import { describe, expect, it } from "vitest";
+import { createTestDb } from "./helpers";
+import { createSoloBootstrapService } from "@/server/domain/solo-bootstrap";
+
+describe("solo bootstrap (P8b)", () => {
+  it("bootstraps a device user with a recovery code and no password", async () => {
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+
+    expect(await solo.isBootstrapped()).toBe(false);
+
+    const { user, recoveryCode, hasPin } = await solo.bootstrap({ displayName: "My Phone" });
+
+    expect(user.username).toMatch(/^device-/);
+    expect(user.display_name).toBe("My Phone");
+    expect(recoveryCode).toMatch(/^[A-Z2-9]{4}(-[A-Z2-9]{4}){9}$/);
+    expect(hasPin).toBe(false);
+    expect(await solo.isBootstrapped()).toBe(true);
+
+    // recovery code is stored only as a hash — never plaintext
+    const row = await db.get<{ recovery_code_hash: string | null; password_hash: string | null }>(
+      "SELECT recovery_code_hash, password_hash FROM users WHERE id = ?",
+      user.id
+    );
+    expect(row?.recovery_code_hash).toBeTruthy();
+    expect(row?.recovery_code_hash).not.toContain(recoveryCode);
+    expect(row?.password_hash).toBeNull(); // device user never logs in over HTTP
+  });
+
+  it("rejects a second bootstrap on the same device (real account exists)", async () => {
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+    await solo.bootstrap({});
+    await expect(solo.bootstrap({})).rejects.toThrow(/unlock it instead/i);
+  });
+
+  it("upgrades a demo-only device into a real account (issue #1)", async () => {
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+    // Simulate the demo having run on this device.
+    await solo.bootstrap({ displayName: "Demo", isDemo: true });
+    const demoUser = await solo.getDeviceUser();
+    await db.run("INSERT INTO accounts (id, user_id, name, type, currency, created_at) VALUES ('demo-account', ?, 'Everyday Checking', 'depository', 'USD', ?)", demoUser!.id, new Date().toISOString());
+    await db.run("INSERT INTO categories (id, user_id, name, created_at) VALUES ('demo-category', ?, 'Groceries', ?)", demoUser!.id, new Date().toISOString());
+    expect(await solo.isBootstrapped()).toBe(true);
+
+    // Creating an account on the same device must NOT say "already set up".
+    const { user, recoveryCode } = await solo.bootstrap({ displayName: "My Phone", pin: "1234" });
+    expect(user.display_name).toBe("My Phone");
+    expect(recoveryCode).toMatch(/^[A-Z2-9]{4}(-[A-Z2-9]{4}){9}$/);
+
+    // Device no longer flagged as demo, recovery code re-hashed, PIN set.
+    const row = await db.get<{ is_demo: number; display_name: string; recovery_code_hash: string | null }>(
+      "SELECT is_demo, display_name, recovery_code_hash FROM users WHERE id = ?",
+      user.id
+    );
+    expect(row?.is_demo).toBe(0);
+    expect(row?.recovery_code_hash).toBeTruthy();
+    expect(row?.recovery_code_hash).not.toContain(recoveryCode);
+    // Onboarding was reset so the wizard runs again.
+    const settings = await db.get<{ onboarding_completed: number }>(
+      "SELECT onboarding_completed FROM user_settings WHERE user_id = ?",
+      user.id
+    );
+    expect(settings?.onboarding_completed).toBe(0);
+    expect(await db.get("SELECT id FROM accounts WHERE id = 'demo-account'")).toBeUndefined();
+    expect(await db.get("SELECT id FROM categories WHERE id = 'demo-category'")).toBeUndefined();
+  });
+
+  it("verifies recovery codes case-insensitively and rejects wrong ones", async () => {
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+    const { recoveryCode } = await solo.bootstrap({});
+
+    expect(await solo.verifyRecoveryCode(recoveryCode)).toBe(true);
+    expect(await solo.verifyRecoveryCode(recoveryCode.toLowerCase())).toBe(true);
+    expect(await solo.verifyRecoveryCode("AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA")).toBe(false);
+  });
+
+  it("sets a PIN via device_lock and unlocks with it", async () => {
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+    await solo.bootstrap({ pin: "1234" });
+
+    expect(await solo.hasPin()).toBe(true);
+    await solo.unlock("1234"); // no throw
+
+    await expect(solo.unlock("0000")).rejects.toThrow(/pin/i);
+  });
+
+  it("resets the PIN with a verified recovery code", async () => {
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+    const { recoveryCode } = await solo.bootstrap({ pin: "1111" });
+
+    await solo.resetPin(recoveryCode, "9999");
+    await solo.unlock("9999"); // new PIN works
+    await expect(solo.unlock("1111")).rejects.toThrow(/pin/i);
+  });
+
+  it("has no device user before bootstrap", async () => {
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+    expect(await solo.getDeviceUser()).toBeNull();
+    expect(await solo.hasPin()).toBe(false);
+  });
+
+  it("generates recovery codes from a CSPRNG, not Math.random (regression)", async () => {
+    // The recovery code is the sole "I forgot my PIN" path — it must not be
+    // drawn from a predictable PRNG. Source guard: no Math.random in the
+    // generator; crypto.getRandomValues is used instead.
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const src = readFileSync(resolve(__dirname, "../src/server/domain/solo-bootstrap.ts"), "utf8");
+    expect(src).not.toMatch(/Math\.random/);
+    expect(src).toMatch(/crypto\.getRandomValues/);
+
+    // Behavior: codes still match the dashed base32 shape and are unique.
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+    const { recoveryCode } = await solo.bootstrap({});
+    expect(recoveryCode).toMatch(/^[A-Z2-9]{4}(-[A-Z2-9]{4}){9}$/);
+    expect(await solo.verifyRecoveryCode(recoveryCode)).toBe(true);
+  });
+
+  it("compares the recovery-code hash in constant time (regression)", async () => {
+    // verifyRecoveryCode is the sole "I forgot my PIN" reset path. Every other
+    // secret comparison in the codebase is constant-time (server-mode
+    // safeEqual, device-lock timingSafeEqualHex, remote-access constEq); a
+    // plain === here would leak hash-prefix timing. Source guard: the compare
+    // goes through timingSafeEqualHex, never a bare === on the hash.
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const src = readFileSync(resolve(__dirname, "../src/server/domain/solo-bootstrap.ts"), "utf8");
+    expect(src).toMatch(/timingSafeEqualHex\(\s*row\.recovery_code_hash/);
+    expect(src).not.toMatch(/recovery_code_hash\s*===/);
+
+    // Behavior unchanged: correct code verifies, wrong code does not.
+    const db = createTestDb();
+    const solo = createSoloBootstrapService(db);
+    const { recoveryCode } = await solo.bootstrap({});
+    expect(await solo.verifyRecoveryCode(recoveryCode)).toBe(true);
+    expect(await solo.verifyRecoveryCode("AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA")).toBe(false);
+  });
+});

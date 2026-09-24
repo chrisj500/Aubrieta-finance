@@ -1,46 +1,44 @@
-# Dependencies
+# dependencies / build
 node_modules/
-.pnpm-store/
-
-# Build output
 .next/
-dist/
 out/
-coverage/
+dist/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
 
-# Runtime data
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
+# runtime data
 data/
-backups/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
-# Environment and secrets
+# env & secrets
 .env
 .env.*
 !.env.example
-*.pem
-*.key
-*.p12
-*.pfx
-*.jks
+android/key.properties
 *.keystore
+*.jks
 
-# Financial exports / imports
-*.ofx
-*.qfx
-*.qbo
-*.csv
-!test/fixtures/**/*.csv
-!tests/fixtures/**/*.csv
+# tests
+coverage/
+playwright-report/
+test-results/
 
-# Logs
-*.log
-logs/
-
-# OS / editors
+# misc
 .DS_Store
-.idea/
-.vscode/
+*.log
+
+# Capacitor / Android build outputs
+android/app/build/
+android/.gradle/
+android/local.properties
+android/capacitor-cordova-android-plugins/build/
+android/.cxx/
+*.apk
+android/app/src/main/assets/
+
+# generated service worker (serwist build output)
+public/sw.js
+public/sw.js.map

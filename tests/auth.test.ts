@@ -1,0 +1,298 @@
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
+import Database from "better-sqlite3";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createDb, SqliteDb } from "@/server/db/adapter";
+import { createAuthService } from "@/server/auth/service";
+import { createSession, getSessionFromToken } from "@/server/auth/sessions";
+
+const require = createRequire(import.meta.url);
+const { runMigrations } = require(path.resolve("migrations/up.js"));
+
+let dir: string;
+let file: string;
+let db: SqliteDb;
+
+beforeAll(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "of-auth-"));
+  file = path.join(dir, "test.db");
+  const raw = new Database(file);
+  runMigrations(raw);
+  raw.close();
+  db = createDb(file);
+});
+
+afterAll(() => {
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const auth = () => createAuthService(db);
+
+describe("auth service", () => {
+  it("registers a user (lowercased username) + settings row", async () => {
+    const { user } = await auth().register({
+      username: "Alice",
+      display_name: "Alice A.",
+      password: "correct-horse-battery-staple",
+    });
+    expect(user.username).toBe("alice");
+    expect(user.display_name).toBe("Alice A.");
+    const settings = await db.get("SELECT user_id FROM user_settings WHERE user_id = ?", user.id);
+    expect(settings).toBeTruthy();
+  });
+
+  it("rejects duplicate usernames", async () => {
+    await expect(
+      auth().register({ username: "ALICE", display_name: "x", password: "another-strong-pass" })
+    ).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("enforces the password policy (no min length; blocks username/common passwords)", async () => {
+    // No minimum length anymore (2026-08-03) — a 5-char password is fine.
+    const { user } = await auth().register({ username: "bob", display_name: "Bob", password: "5char" });
+    expect(user.username).toBe("bob");
+    await expect(
+      auth().register({ username: "carol", display_name: "Carol", password: "password" })
+    ).rejects.toMatchObject({ code: "bad_request" });
+    await expect(
+      auth().register({ username: "dave", display_name: "Dave", password: "dave" })
+    ).rejects.toMatchObject({ code: "bad_request" });
+  });
+
+  it("logs in with correct credentials and fails with wrong ones", async () => {
+    const wrong = auth().login({ username: "alice", password: "nope-nope-nope", duration: "30d", device_label: "test" });
+    await expect(wrong).rejects.toMatchObject({ code: "bad_request" });
+
+    const { user, token, expiresAt } = await auth().login({
+      username: "alice",
+      password: "correct-horse-battery-staple",
+      duration: "30d",
+      device_label: "test",
+    });
+    expect(user.username).toBe("alice");
+    expect(expiresAt).toBeTruthy();
+
+    const session = await getSessionFromToken(token, db);
+    expect(session?.user.id).toBe(user.id);
+  });
+
+  it("creates forever sessions with idle timeout and no expiry", async () => {
+    const { user } = await auth().login({
+      username: "alice",
+      password: "correct-horse-battery-staple",
+      duration: "forever",
+      device_label: "forever-device",
+    });
+    const row = await db.get<{ expires_at: string | null; idle_timeout_h: number | null }>(
+      "SELECT expires_at, idle_timeout_h FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+      user.id
+    );
+    expect(row?.expires_at).toBeNull();
+    expect(row?.idle_timeout_h).toBe(2160);
+  });
+
+  it("revokes a single session", async () => {
+    const { user } = await auth().register({ username: "dave", display_name: "Dave", password: "dave-has-a-strong-pass" });
+    const s1 = await createSession(user.id, "7d", "dev1", db);
+    const s2 = await createSession(user.id, "7d", "dev2", db);
+    await auth().revokeSession((await getSessionFromToken(s1.token, db))!.id, user.id);
+    expect(await getSessionFromToken(s1.token, db)).toBeNull();
+    expect(await getSessionFromToken(s2.token, db)).not.toBeNull();
+  });
+
+  it("logout-all revokes everything; password change keeps only the current session", async () => {
+    const { user } = await auth().register({ username: "erin", display_name: "Erin", password: "erin-has-a-strong-pass" });
+    await createSession(user.id, "7d", "other", db);
+    const token = (await createSession(user.id, "7d", "current", db)).token;
+    const current = await getSessionFromToken(token, db);
+    expect(current).not.toBeNull();
+
+    await auth().changePassword(user.id, "erin-has-a-strong-pass", "erin-new-strong-pass");
+    await auth().revokeAllSessions(user.id, current!.id);
+
+    const rows = await db.all<{ id: string }>("SELECT id FROM sessions WHERE user_id = ?", user.id);
+    expect(rows.length).toBe(1);
+    expect(rows[0].id).toBe(current!.id);
+  });
+
+  it("resets a password with the recovery code and invalidates old sessions", async () => {
+    const { user } = await auth().register({ username: "frank", display_name: "Frank", password: "frank-has-a-strong-pass" });
+    const code = await auth().createRecoveryCode(user.id);
+    const session = await createSession(user.id, "30d", "dev", db);
+
+    await expect(
+      auth().resetPasswordWithRecovery("frank", "wrong-code", "frank-reset-strong-pass")
+    ).rejects.toMatchObject({ code: "bad_request" });
+
+    await auth().resetPasswordWithRecovery("frank", code, "frank-reset-strong-pass");
+    expect(await getSessionFromToken(session.token, db)).toBeNull();
+    await expect(
+      auth().login({ username: "frank", password: "frank-has-a-strong-pass", duration: "30d", device_label: "t" })
+    ).rejects.toMatchObject({ code: "bad_request" });
+    const login = await auth().login({ username: "frank", password: "frank-reset-strong-pass", duration: "30d", device_label: "t" });
+    expect(login.user.username).toBe("frank");
+  });
+
+  it("makes the recovery code single-use", async () => {
+    const { user } = await auth().register({ username: "hank", display_name: "Hank", password: "hank-has-a-strong-pass" });
+    const code = await auth().createRecoveryCode(user.id);
+    await auth().resetPasswordWithRecovery("hank", code, "hank-first-reset-pass");
+    // The same code must not reset the password a second time.
+    await expect(
+      auth().resetPasswordWithRecovery("hank", code, "hank-second-reset-pass")
+    ).rejects.toMatchObject({ code: "bad_request" });
+    const login = await auth().login({ username: "hank", password: "hank-first-reset-pass", duration: "30d", device_label: "t" });
+    expect(login.user.username).toBe("hank");
+  });
+
+  it("rejects a password equal to the username on change and recovery reset", async () => {
+    const { user } = await auth().register({ username: "ivy", display_name: "Ivy", password: "ivy-has-a-strong-pass" });
+    // changePassword must enforce the username check, not just register.
+    await expect(auth().changePassword(user.id, "ivy-has-a-strong-pass", "ivy")).rejects.toMatchObject({
+      code: "bad_request",
+    });
+    // Old password still valid after the rejected change.
+    const still = await auth().login({ username: "ivy", password: "ivy-has-a-strong-pass", duration: "30d", device_label: "t" });
+    expect(still.user.username).toBe("ivy");
+    // Recovery reset must enforce it too.
+    const code = await auth().createRecoveryCode(user.id);
+    await expect(auth().resetPasswordWithRecovery("ivy", code, "IVY")).rejects.toMatchObject({ code: "bad_request" });
+    await auth().resetPasswordWithRecovery("ivy", code, "ivy-reset-strong-pass");
+    const after = await auth().login({ username: "ivy", password: "ivy-reset-strong-pass", duration: "30d", device_label: "t" });
+    expect(after.user.username).toBe("ivy");
+  });
+
+  it("deletes a user and their related rows", async () => {
+    const { user } = await auth().register({ username: "grace", display_name: "Grace", password: "grace-has-a-strong-pass" });
+    await createSession(user.id, "30d", "dev", db);
+    await db.run("INSERT INTO bills (id, user_id, name, amount_cents, frequency, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+      "b1", user.id, "Rent", 100000, "monthly", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+    // category_learnings (run-40 table) must be purged too — it is user-scoped
+    // and was missing from the cascade, leaking a deleted user's merchant map.
+    await db.run("INSERT INTO categories (id, user_id, name, is_system, created_at) VALUES (?,?,?,?,?)",
+      "c1", user.id, "Groceries", 0, "2026-01-01T00:00:00Z");
+    await db.run("INSERT INTO category_learnings (user_id, merchant_key, category_id, count, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+      user.id, "trader joes", "c1", 1, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+    // agent_manual (run-19 table) is user-scoped by PRIMARY KEY and also leaked.
+    await db.run("INSERT INTO agent_manual (user_id, categorization, budgeting, general, updated_at) VALUES (?,?,?,?,?)",
+      user.id, "x", "y", "z", "2026-01-01T00:00:00Z");
+    // pairing_codes carries a user_id column and leaked too (unused/expired codes
+    // are only cleaned lazily on accept, so a deleted user's rows would persist).
+    await db.run("INSERT INTO pairing_codes (code_hash, user_id, expires_at, used) VALUES (?,?,?,0)",
+      "pairhash1", user.id, "2099-01-01T00:00:00Z");
+    await auth().deleteUser(user.id);
+    const u = await db.get("SELECT id FROM users WHERE id = ?", user.id);
+    expect(u).toBeUndefined();
+    const bill = await db.get("SELECT id FROM bills WHERE user_id = ?", user.id);
+    expect(bill).toBeUndefined();
+    const s = await db.get("SELECT id FROM sessions WHERE user_id = ?", user.id);
+    expect(s).toBeUndefined();
+    const learn = await db.get("SELECT user_id FROM category_learnings WHERE user_id = ?", user.id);
+    expect(learn).toBeUndefined();
+    const manual = await db.get("SELECT user_id FROM agent_manual WHERE user_id = ?", user.id);
+    expect(manual).toBeUndefined();
+    const pairing = await db.get("SELECT code_hash FROM pairing_codes WHERE user_id = ?", user.id);
+    expect(pairing).toBeUndefined();
+  });
+
+  it("login is timing-safe: nonexistent user costs the same as a wrong password", async () => {
+    // Both paths must run a full bcrypt compare (cost 12 => hundreds of ms).
+    // A fast early-return for unknown usernames would let an attacker measure
+    // response time to enumerate valid accounts (username-existence oracle).
+    const time = async (p: () => Promise<unknown>) => {
+      const t0 = performance.now();
+      await p().catch(() => {});
+      return performance.now() - t0;
+    };
+    const [tNonexistent, tWrong] = await Promise.all([
+      time(() =>
+        auth().login({
+          username: "this-user-definitely-does-not-exist-xyz",
+          password: "whatever-strong-pass",
+          duration: "30d",
+          device_label: "t",
+        })
+      ),
+      time(() =>
+        auth().login({
+          username: "alice",
+          password: "this-is-the-wrong-password-zzz",
+          duration: "30d",
+          device_label: "t",
+        })
+      ),
+    ]);
+    // Both must clear a bcrypt cost-12 floor, proving the nonexistent path runs
+    // a real compare (the dummy hash) instead of returning before hashing.
+    expect(tNonexistent).toBeGreaterThan(50);
+    expect(tWrong).toBeGreaterThan(50);
+  });
+});
+
+describe("rate limiter", () => {
+  it("blocks after max attempts and recovers after the window", async () => {
+    const { createRateLimiter } = await import("@/lib/rate-limit");
+    const limiter = createRateLimiter({ windowMs: 60_000, max: 3 });
+    expect(limiter.check("k").ok).toBe(true);
+    expect(limiter.check("k").ok).toBe(true);
+    expect(limiter.check("k").ok).toBe(true);
+    expect(limiter.check("k").ok).toBe(false);
+    limiter.prune();
+    // window still active; simulate expiry by resetting
+    limiter.reset("k");
+    expect(limiter.check("k").ok).toBe(true);
+  });
+
+  it("stays bounded under many distinct keys (prunes expired buckets)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { createRateLimiter } = await import("@/lib/rate-limit");
+      const limiter = createRateLimiter({ windowMs: 10_000, max: 3 });
+      // Far more distinct keys than the internal cap (>1000) — each must stay ok
+      // and the buckets Map must be swept (not grow without limit).
+      for (let i = 0; i < 1500; i++) expect(limiter.check(`ip-${i}`).ok).toBe(true);
+      // A repeated key still enforces the max.
+      expect(limiter.check("hot").ok).toBe(true);
+      expect(limiter.check("hot").ok).toBe(true);
+      expect(limiter.check("hot").ok).toBe(true);
+      expect(limiter.check("hot").ok).toBe(false);
+      // Advance past the window: the production prune path (size > cap) must
+      // reclaim the 1500+ expired buckets so a re-check starts fresh.
+      vi.advanceTimersByTime(11_000);
+      expect(limiter.check("hot").ok).toBe(true);
+      expect(limiter.check("ip-1").ok).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("cookie parsing", () => {
+  it("malformed percent-encoded cookie does not throw (no pre-auth 500)", async () => {
+    const { getSessionFromRequest } = await import("@/server/auth/sessions");
+    // decodeURIComponent("%") throws URIError — before the fix this crashed
+    // every authed route with a 500 before auth could return 401.
+    const req = new Request("http://localhost/api/accounts", {
+      headers: { cookie: "of_session=%; other=abc%zz" },
+    });
+    await expect(getSessionFromRequest(req, db)).resolves.toBeNull();
+  });
+
+  it("valid session cookie still resolves after the safe-decode change", async () => {
+    const { getSessionFromRequest } = await import("@/server/auth/sessions");
+    const { user } = await auth().register({
+      username: "cookieuser",
+      display_name: "Cookie",
+      password: "correct-horse-battery-staple",
+    });
+    const { token } = await createSession(user.id, "1d", "test", db);
+    const req = new Request("http://localhost/api/accounts", {
+      headers: { cookie: `of_session=${encodeURIComponent(token)}` },
+    });
+    const session = await getSessionFromRequest(req, db);
+    expect(session?.userId).toBe(user.id);
+  });
+});

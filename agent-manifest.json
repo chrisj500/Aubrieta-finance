@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "open-finance",
+  "product": "Open Finance",
+  "version": "0.3.15",
+  "description": "Self-hosted, open-source personal finance app. Bring your own Plaid keys (or none), bring your own agent.",
+  "license": "MIT",
+  "repository": "https://github.com/DeseretSaint/open-finance",
+  "agent": {
+    "mcp": {
+      "stdio": "node scripts/mcp-cli.mjs --url <URL> --token <TOKEN>",
+      "http": "/mcp",
+      "auth": "Bearer <agent token>"
+    },
+    "endpoints": {
+      "summary": "/api/agent/summary",
+      "capabilities": "/api/agent/capabilities",
+      "events": "/api/agent/events",
+      "openapi": "/api/openapi.json",
+      "guide": "/api/agent/guide",
+      "customViews": "/api/custom-views"
+    },
+    "scopes": [
+      "read:summary",
+      "read:banking",
+      "read:investments",
+      "read:budgets",
+      "read:planning",
+      "read:reports",
+      "transactions:edit",
+      "budgets:write",
+      "planning:write",
+      "categories:write",
+      "settings:write",
+      "sync:run",
+      "dev:ui"
+    ],
+    "defaultPreset": "read-only",
+    "permissionModel": "read-only by default; every scope (including investments) grantable; insufficient_scope triggers an in-app Grant/Deny request; all calls audited",
+    "widgets": {
+      "scope": "dev:ui",
+      "tabs": [
+        "dashboard",
+        "budgets",
+        "reports"
+      ],
+      "kinds": [
+        "stat",
+        "progress",
+        "list",
+        "line",
+        "donut"
+      ],
+      "note": "Declarative JSON only \u2014 rendered natively, user-removable."
+    },
+    "guardrails": [
+      "read-only by default",
+      "permission requests (auto-approve reads within caps: optional)",
+      "audit log (default on)",
+      "confirm before destructive writes (default on)",
+      "no account deletion (non-removable)",
+      "no money movement (structural)"
+    ]
+  },
+  "docs": {
+    "plan": "docs/PLAN.md",
+    "design": "docs/DESIGN.md",
+    "agentGuide": "docs/AGENTS.md"
+  }
+}

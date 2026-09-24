@@ -1,29 +1,36 @@
-# Contributing to Aubrieta
+# Contributing
 
-Thanks for considering a contribution.
+Thanks for your interest in Open Finance!
 
-Aubrieta is an open-source, self-hosted personal-finance project derived from Open Finance and focused on provider choice, recurring bills, liabilities, investments, and household use.
+## Ground rules
 
-## Development principles
+- **Read [`docs/PLAN.md`](docs/PLAN.md) first** — it is the contract: architecture, schema,
+  API, design tokens, roadmap, and development phases. Changes to behavior should update the plan.
+- **Every feature must have a purpose** — if it doesn't earn its place, it doesn't land.
+- **No secrets, ever.** No real keys, tokens, passwords, or `.env` files in commits
+  (gitleaks runs in CI and will fail the build).
+- **Design tokens come from `docs/DESIGN.md`** — do not invent new colors/spacing.
 
-- Keep provider SDK types inside provider adapters.
-- Do not make Plaid, Teller, SimpleFIN, or any other provider the canonical data model.
-- Use synthetic data in tests, fixtures, and screenshots.
-- Preserve account history when connections are replaced or providers change.
-- Treat Bills and notification correctness as first-class behavior.
-- Avoid introducing public-SaaS assumptions into core flows.
-- Add or update tests for behavior changes.
+## Development flow
 
-## Pull requests
+- Branch from `main`, open a PR, CI must be green (`ci` status check).
+- Commit style: `feat:`, `fix:`, `chore:`, `docs:`, `test:`.
+- Tests: `pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm e2e`.
+- Visual changes: update the screenshot suite (`pnpm screenshots`) in the same PR.
 
-Please keep changes focused and describe:
+## Architecture at a glance
 
-- what changed
-- why it changed
-- migrations or compatibility impact
-- security/privacy implications
-- tests performed
+- Next.js 15 (App Router) · React 19 · Tailwind v4 + shadcn/ui
+- SQLite everywhere (raw SQL module; `better-sqlite3` on server, `cap-sqlite` on Android)
+- Hand-rolled sessions auth · REST + zod
+- Plaid via a server adapter (or the native Android proxy plugin)
+- BYOA: MCP server + tiered scopes + permission requests
 
-## Financial data
+## Building the Android APK
 
-Never include real bank data, account numbers, transaction exports, provider tokens, or household identifiers in issues, tests, screenshots, or pull requests.
+The APK is built in CI (`release.yml`) — you do not need a local Android SDK to
+contribute. See `docs/PLAN.md` Appendix H for signing secrets.
+
+## Code of conduct
+
+Be kind, be constructive. Harassment of any kind is not tolerated.

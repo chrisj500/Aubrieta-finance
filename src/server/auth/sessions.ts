@@ -1,0 +1,258 @@
+import { randomBytes, randomUUID } from "node:crypto";
+import { env } from "@/lib/env";
+import { hashSecret } from "@/lib/crypto";
+import { getDb, type Db } from "@/server/db/adapter";
+
+export const SESSION_COOKIE = "of_session";
+export const SESSION_TOKEN_PREFIX = "of_sess_";
+
+export const DURATIONS = {
+  "1h": 3600,
+  "1d": 86400,
+  "7d": 604800,
+  "30d": 2592000,
+  forever: null,
+} as const;
+
+export type Duration = keyof typeof DURATIONS;
+
+export const FOREVER_IDLE_HOURS = 2160; // 90 days without use → auto-revoke
+const COOKIE_MAX_AGE_CAP = 400 * 24 * 3600; // browser Max-Age limit
+
+export interface SessionUser {
+  id: string;
+  username: string | null;
+  display_name: string;
+  email: string | null;
+  is_demo: boolean;
+}
+
+export interface SessionInfo {
+  id: string;
+  userId: string;
+  deviceLabel: string;
+  createdAt: string;
+  expiresAt: string | null;
+  lastSeenAt: string;
+  user: SessionUser;
+}
+
+export function isHttps(): boolean {
+  // The session cookie is marked `secure` whenever we believe we're behind
+  // TLS. Solo/phone mode runs entirely in-process (no network cookie), so
+  // this only affects the hub web UI. We deliberately default to `secure`
+  // rather than gating on the request scheme, because a request can arrive
+  // over plain HTTP even when the site is TLS-terminated (proxy → app). The
+  // operator must set PUBLIC_URL to an https origin; if they truly need an
+  // insecure cookie for local dev they opt in with OF_ALLOW_INSECURE_COOKIE.
+  return env.PUBLIC_URL.startsWith("https://") || !env.ALLOW_INSECURE_COOKIE;
+}
+
+export function newSessionToken(): string {
+  return SESSION_TOKEN_PREFIX + randomBytes(32).toString("base64url");
+}
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+function parseCookies(header: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx > -1) {
+      const raw = part.slice(idx + 1).trim();
+      // decodeURIComponent throws URIError on malformed percent-encoding
+      // (e.g. `of_session=%`), which would 500 every authed route pre-auth;
+      // fall back to the raw value so a garbage cookie just fails lookup (401).
+      let value = raw;
+      try {
+        value = decodeURIComponent(raw);
+      } catch {
+        // keep raw
+      }
+      out[part.slice(0, idx).trim()] = value;
+    }
+  }
+  return out;
+}
+
+export function getSessionToken(req: Request): string | null {
+  const cookies = parseCookies(req.headers.get("cookie") ?? "");
+  return cookies[SESSION_COOKIE] ?? null;
+}
+
+/** Create a session row; returns the raw token (shown once, hashed at rest). */
+export async function createSession(
+  userId: string,
+  duration: Duration,
+  deviceLabel: string,
+  db: Db = getDb()
+): Promise<{ token: string; expiresAt: string | null; idleTimeoutH: number | null }> {
+  const token = newSessionToken();
+  const seconds = DURATIONS[duration];
+  const expiresAt = seconds ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+  const idleTimeoutH = duration === "forever" ? FOREVER_IDLE_HOURS : null;
+  await db.run(
+    `INSERT INTO sessions (id, user_id, token_hash, device_label, created_at, expires_at, idle_timeout_h, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    randomUUID(),
+    userId,
+    hashSecret(token),
+    deviceLabel,
+    now(),
+    expiresAt,
+    idleTimeoutH,
+    now()
+  );
+  return { token, expiresAt, idleTimeoutH };
+}
+
+/** Validate a session from its raw token. Returns null if invalid/expired/revoked. */
+export async function getSessionFromToken(
+  token: string,
+  db: Db = getDb()
+): Promise<SessionInfo | null> {
+  const row = await db.get<{
+    id: string;
+    user_id: string;
+    device_label: string;
+    created_at: string;
+    expires_at: string | null;
+    idle_timeout_h: number | null;
+    last_seen_at: string;
+    u_id: string;
+    u_username: string | null;
+    u_display_name: string;
+    u_email: string | null;
+    u_is_demo: number;
+  }>(
+    `SELECT s.id, s.user_id, s.device_label, s.created_at, s.expires_at, s.idle_timeout_h, s.last_seen_at,
+            u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
+            u.email AS u_email, u.is_demo AS u_is_demo
+     FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.token_hash = ?`,
+    hashSecret(token)
+  );
+  if (!row) return null;
+
+  const nowMs = Date.now();
+  if (row.expires_at && new Date(row.expires_at).getTime() <= nowMs) return null;
+  if (
+    row.idle_timeout_h &&
+    new Date(row.last_seen_at).getTime() + row.idle_timeout_h * 3600_000 <= nowMs
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    userId: row.user_id,
+    deviceLabel: row.device_label,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    lastSeenAt: row.last_seen_at,
+    user: {
+      id: row.u_id,
+      username: row.u_username,
+      display_name: row.u_display_name,
+      email: row.u_email,
+      is_demo: row.u_is_demo === 1,
+    },
+  };
+}
+
+export async function getSessionFromRequest(req: Request, db: Db = getDb()): Promise<SessionInfo | null> {
+  const token = getSessionToken(req);
+  if (!token) return null;
+  const session = await getSessionFromToken(token, db);
+  if (session) {
+    await touchSession(session.id, db);
+    // Housekeeping: reap expired/idle-timed-out rows (throttled, never throws).
+    void maybePurgeExpiredSessions(db);
+  }
+  return session;
+}
+
+/** Throttled last_seen update (max once per 5 min per session). */
+const TOUCH_THROTTLE_MS = 300_000;
+/** Hard cap on tracked session ids. An entry is otherwise only reclaimed when
+ *  the SAME session re-authenticates, so a long-running server with session
+ *  churn (create / revoke / purge) would accumulate stale ids forever — the
+ *  same unbounded-memory class as the rate limiter. Entries older than the
+ *  throttle window are inert (a missing entry and an expired one behave
+ *  identically), so pruning them is always safe. */
+const MAX_TOUCHED = 1000;
+const touched = new Map<string, number>();
+
+function pruneTouched(nowMs: number): void {
+  for (const [k, ts] of touched) if (ts + TOUCH_THROTTLE_MS <= nowMs) touched.delete(k);
+  // If a flood of distinct still-live sessions still exceeds the cap, evict the
+  // oldest-inserted ids (LRU) to keep the footprint hard-capped.
+  if (touched.size > MAX_TOUCHED) {
+    let overflow = touched.size - MAX_TOUCHED;
+    for (const k of touched.keys()) {
+      if (overflow <= 0) break;
+      touched.delete(k);
+      overflow--;
+    }
+  }
+}
+
+export async function touchSession(sessionId: string, db: Db = getDb()): Promise<void> {
+  const nowMs = Date.now();
+  if ((touched.get(sessionId) ?? 0) + TOUCH_THROTTLE_MS > nowMs) return;
+  if (touched.size >= MAX_TOUCHED) pruneTouched(nowMs);
+  touched.set(sessionId, nowMs);
+  await db.run("UPDATE sessions SET last_seen_at = ? WHERE id = ?", now(), sessionId);
+}
+
+/** Test-only: current tracked-session count. */
+export function __touchedCountForTest(): number {
+  return touched.size;
+}
+
+/** Test-only: clear the touch throttle. */
+export function _resetTouchedForTest(): void {
+  touched.clear();
+}
+
+const PURGE_INTERVAL_MS = 3600_000; // at most one sweep per hour per process
+let lastPurgeMs = 0;
+
+/** SQL predicate matching getSessionFromToken's validity rules (expired OR idle-timed-out). */
+const DEAD_SESSION_WHERE = `(expires_at IS NOT NULL AND expires_at <= ?)
+     OR (idle_timeout_h IS NOT NULL AND datetime(last_seen_at, '+' || idle_timeout_h || ' hours') <= datetime(?))`;
+
+/**
+ * Delete sessions that are expired or idle-timed-out. Rows are otherwise
+ * only removed by explicit revoke / user deletion, so without this sweep the
+ * table (and the Settings device list) accumulates dead rows forever.
+ * Returns the number of rows deleted.
+ */
+export async function purgeExpiredSessions(db: Db = getDb(), nowMs: number = Date.now()): Promise<number> {
+  const nowIso = new Date(nowMs).toISOString();
+  const res = await db.run(`DELETE FROM sessions WHERE ${DEAD_SESSION_WHERE}`, nowIso, nowIso);
+  return res.changes;
+}
+
+/** Throttled purge hook — call on session-authenticated requests; never throws. */
+export async function maybePurgeExpiredSessions(db: Db = getDb(), nowMs: number = Date.now()): Promise<void> {
+  if (nowMs - lastPurgeMs < PURGE_INTERVAL_MS) return;
+  lastPurgeMs = nowMs;
+  try {
+    await purgeExpiredSessions(db, nowMs);
+  } catch {
+    // Purge is housekeeping only — never let it break authentication.
+  }
+}
+
+/** Test-only: reset the purge throttle. */
+export function _resetPurgeThrottleForTest(): void {
+  lastPurgeMs = 0;
+}
+
+export function sessionCookieMaxAge(duration: Duration): number {
+  const seconds = DURATIONS[duration];
+  return seconds ? Math.min(seconds, COOKIE_MAX_AGE_CAP) : COOKIE_MAX_AGE_CAP;
+}

@@ -1,35 +1,41 @@
 # Security Policy
 
-Aubrieta handles highly sensitive financial data. Security reports should not be posted in public issues when they contain exploit details, credentials, tokens, account identifiers, or private financial data.
+## Supported versions
+
+| Version | Supported |
+|---|---|
+| main (unreleased) | ✅ |
 
 ## Reporting a vulnerability
 
-For now, please use GitHub's private vulnerability reporting feature if enabled for this repository. If private vulnerability reporting is unavailable, open a minimal public issue requesting a private contact channel without including exploit details.
+Please **do not open a public issue** for security vulnerabilities. Instead:
 
-## Scope
+1. Open a **private security advisory** on GitHub:
+   https://github.com/DeseretSaint/open-finance/security/advisories/new
+2. Or email the maintainers (address to be added) with a subject line starting
+   with `[SECURITY]`.
 
-Security-sensitive areas include:
+You should receive an acknowledgement within 7 days. We ask that you allow
+time for a fix and disclosure before publishing details.
 
-- authentication and session handling
-- provider access-token storage
-- webhook validation
-- authorization and household isolation
-- database encryption and backups
-- financial-data import and parsing
-- secret handling
-- dependency and supply-chain integrity
+## What we take seriously
 
-## Secrets
+- Exposure of secrets (Plaid keys, session/agent tokens, `ENCRYPTION_KEY`, `AUTH_SECRET`)
+- Unauthorized access to another user's data on a shared hub
+- BYOA token privilege escalation (scope/allowlist bypass)
+- XSS / CSRF / injection in the web app
+- Supply-chain (dependency) compromise
 
-Never commit:
+## Disclosure policy
 
-- Plaid secrets or access tokens
-- Teller certificates or private keys
-- SimpleFIN access URLs
-- email/SMTP credentials
-- push-notification credentials
-- production database files
-- backups
-- real household financial exports
+- We will credit reporters (unless anonymity is requested).
+- We will publish a security advisory + patch release for verified issues.
+- Coordinated disclosure: 90 days for high-severity, 30 days for critical.
 
-Use environment variables or an external secret store for runtime secrets.
+## Hardening notes for users
+
+- `ENCRYPTION_KEY` and `AUTH_SECRET` must be unique per install.
+- Agent tokens grant financial read access — treat them carefully, revoke when unused.
+- LAN mode = trust your network; prefer Tailscale or TLS for anything sensitive.
+- Back up your SQLite file (`Settings → Backup` once shipped) — a backup is only
+  restorable with the same `ENCRYPTION_KEY`.

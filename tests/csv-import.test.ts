@@ -1,0 +1,153 @@
+import { describe, expect, it } from "vitest";
+import { createCsvImportService } from "@/server/domain/csv-import";
+import { createTestDb, seedManualAccount, seedUser } from "./helpers";
+
+describe("csv import (bank statement files)", () => {
+  it("parses a generic Date, Description, Amount layout (negative = expense)", async () => {
+    const db = createTestDb();
+    await seedUser(db);
+    const svc = createCsvImportService(db);
+    const { rows } = svc.parseCsv(
+      "Date,Description,Amount\n" +
+        "2026-01-15,STARBUCKS,6.45\n" +
+        "2026-01-16,PAYROLL,2500.00\n" +
+        "2026-01-17,Netflix,-15.99\n"
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toEqual({ date: "2026-01-15", name: "STARBUCKS", amountCents: 645 });
+    expect(rows[1]).toEqual({ date: "2026-01-16", name: "PAYROLL", amountCents: 250000 });
+    expect(rows[2]).toEqual({ date: "2026-01-17", name: "Netflix", amountCents: -1599 });
+  });
+
+  it("parses Debit/Credit pairs (debit = expense, credit = income)", async () => {
+    const db = createTestDb();
+    const svc = createCsvImportService(db);
+    const { rows } = svc.parseCsv(
+      "Date,Description,Debit,Credit\n" +
+        "01/15/2026,Grocery Store,45.67,\n" +
+        "01/16/2026,Deposit,,1200.00\n"
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ date: "2026-01-15", name: "Grocery Store", amountCents: -4567 });
+    expect(rows[1]).toEqual({ date: "2026-01-16", name: "Deposit", amountCents: 120000 });
+  });
+
+  it("dedupes on re-import (same account, date, amount, name)", async () => {
+    const db = createTestDb();
+    const userId = (await seedUser(db)).id;
+    const accountId = await seedManualAccount(db, userId);
+    const svc = createCsvImportService(db);
+    const csv =
+      "Date,Description,Amount\n" +
+      "2026-01-15,STARBUCKS,6.45\n" +
+      "2026-01-16,AMAZON,23.10\n";
+
+    const first = await svc.importCsv(userId, accountId, csv);
+    expect(first.imported).toBe(2);
+    expect(first.skipped).toBe(0);
+
+    const second = await svc.importCsv(userId, accountId, csv);
+    expect(second.imported).toBe(0);
+    expect(second.skipped).toBe(2);
+
+    const rows = await db.all<{ c: number }>("SELECT COUNT(*) AS c FROM transactions WHERE account_id = ?", accountId);
+    expect(rows[0].c).toBe(2);
+  });
+
+  it("categorizes obvious merchants on import via the name-keyword fallback", async () => {
+    const db = createTestDb();
+    const userId = (await seedUser(db)).id;
+    const accountId = await seedManualAccount(db, userId);
+    const svc = createCsvImportService(db);
+    await svc.importCsv(
+      userId,
+      accountId,
+      "Date,Description,Amount\n2026-01-15,STARBUCKS,6.45\n2026-01-16,SOMETHING_UNKNOWN,9.99\n"
+    );
+    const rows = await db.all<{ name: string; user_category_id: string | null }>(
+      "SELECT name, user_category_id FROM transactions WHERE account_id = ?",
+      accountId
+    );
+    const starbucks = rows.find((r) => r.name === "STARBUCKS");
+    const unknown = rows.find((r) => r.name === "SOMETHING_UNKNOWN");
+    expect(starbucks?.user_category_id).toBeTruthy();
+    expect(unknown?.user_category_id).toBeNull();
+  });
+
+  it("rejects a CSV with no recognizable columns", async () => {
+    const db = createTestDb();
+    const svc = createCsvImportService(db);
+    expect(() => svc.parseCsv("Foo,Bar,Baz\n1,2,3\n")).toThrow();
+  });
+
+  describe("tolerant header detection (real bank export phrasings)", () => {
+    it("detects 'Merchant Name' as the name column", () => {
+      const db = createTestDb();
+      const svc = createCsvImportService(db);
+      const { rows } = svc.parseCsv(
+        "Date,Merchant Name,Amount\n2026-02-01,TRADER JOES,-42.13\n"
+      );
+      expect(rows).toEqual([{ date: "2026-02-01", name: "TRADER JOES", amountCents: -4213 }]);
+    });
+
+    it("detects 'Payee Name' + 'Transaction Amount'", () => {
+      const db = createTestDb();
+      const svc = createCsvImportService(db);
+      const { rows } = svc.parseCsv(
+        "Posted Date,Payee Name,Transaction Amount\n02/03/2026,ACME PAYROLL,1800.00\n"
+      );
+      expect(rows).toEqual([{ date: "2026-02-03", name: "ACME PAYROLL", amountCents: 180000 }]);
+    });
+
+    it("detects 'Transaction Description' + 'Amount ($)'", () => {
+      const db = createTestDb();
+      const svc = createCsvImportService(db);
+      const { rows } = svc.parseCsv(
+        "Trans Date,Transaction Description,Amount ($)\n2026-02-04,SHELL GAS,\"-31.50\"\n"
+      );
+      expect(rows).toEqual([{ date: "2026-02-04", name: "SHELL GAS", amountCents: -3150 }]);
+    });
+
+    it("detects 'Reference' as the name column", () => {
+      const db = createTestDb();
+      const svc = createCsvImportService(db);
+      const { rows } = svc.parseCsv(
+        "Date,Reference,Amount\n2026-02-05,ACH TRANSFER 9912,250.00\n"
+      );
+      expect(rows).toEqual([{ date: "2026-02-05", name: "ACH TRANSFER 9912", amountCents: 25000 }]);
+    });
+
+    it("detects a combined 'Amount Debit/Credit' column as one signed amount", () => {
+      const db = createTestDb();
+      const svc = createCsvImportService(db);
+      const { rows } = svc.parseCsv(
+        "Date,Description,Amount Debit/Credit\n2026-02-06,COFFEE SHOP,-4.75\n2026-02-07,REFUND,12.00\n"
+      );
+      expect(rows).toEqual([
+        { date: "2026-02-06", name: "COFFEE SHOP", amountCents: -475 },
+        { date: "2026-02-07", name: "REFUND", amountCents: 1200 },
+      ]);
+    });
+
+    it("detects 'Debit Amount'/'Credit Amount' pairs (and not as a signed amount)", () => {
+      const db = createTestDb();
+      const svc = createCsvImportService(db);
+      const { rows } = svc.parseCsv(
+        "Date,Description,Debit Amount,Credit Amount\n2026-02-08,RENT,1400.00,\n2026-02-09,DEPOSIT,,900.00\n"
+      );
+      expect(rows).toEqual([
+        { date: "2026-02-08", name: "RENT", amountCents: -140000 },
+        { date: "2026-02-09", name: "DEPOSIT", amountCents: 90000 },
+      ]);
+    });
+
+    it("prefers exact 'Name' over fuzzy 'Merchant Name' when both exist", () => {
+      const db = createTestDb();
+      const svc = createCsvImportService(db);
+      const { rows } = svc.parseCsv(
+        "Date,Name,Merchant Name,Amount\n2026-02-10,SHORT NAME,LONG MERCHANT NAME,-1.00\n"
+      );
+      expect(rows).toEqual([{ date: "2026-02-10", name: "SHORT NAME", amountCents: -100 }]);
+    });
+  });
+});
