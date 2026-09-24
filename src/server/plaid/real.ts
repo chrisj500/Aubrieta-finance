@@ -178,6 +178,7 @@ export const realPlaidClient: PlaidClient = {
     const liabilities = res.data.liabilities;
 
     for (const credit of liabilities.credit ?? []) {
+      if (!credit.account_id) continue;
       const aprs = credit.aprs ?? [];
       const purchaseApr = aprs.find((a) => a.apr_type === "purchase_apr") ?? aprs[0];
       out.push({
@@ -213,6 +214,7 @@ export const realPlaidClient: PlaidClient = {
     }
 
     for (const student of liabilities.student ?? []) {
+      if (!student.account_id) continue;
       out.push({
         accountId: student.account_id,
         kind: "student_loan",
