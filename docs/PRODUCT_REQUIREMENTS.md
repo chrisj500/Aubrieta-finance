@@ -1,8 +1,8 @@
-# Verbena product requirements
+# Aubrieta product requirements
 
 ## North-star requirement
 
-Verbena should provide feature parity with the most useful parts of classic Mint for a private household while improving reliability, provider choice, and bill visibility.
+Aubrieta should provide feature parity with the most useful parts of classic Mint for a private household while improving reliability, provider choice, and bill visibility.
 
 ## Required areas
 
@@ -76,7 +76,7 @@ Verbena should provide feature parity with the most useful parts of classic Mint
 
 ## Aggregation requirements
 
-Verbena must support multiple providers concurrently. No provider-specific object may become the canonical account, transaction, bill, or investment record.
+Aubrieta must support multiple providers concurrently. No provider-specific object may become the canonical account, transaction, bill, or investment record.
 
 Initial target providers:
 
