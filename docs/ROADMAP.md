@@ -1,9 +1,9 @@
-# Verbena roadmap
+# Aubrieta roadmap
 
 ## M0 — Foundation
 - import pinned Open Finance baseline
 - preserve MIT attribution
-- establish Verbena branding and architecture
+- establish Aubrieta branding and architecture
 - disable public deployment assumptions
 - define provider-neutral contracts
 - establish household-only registration model
@@ -13,7 +13,7 @@
 - external-provider reference tables
 - connection health and reauthentication states
 - historical account identity independent of provider
-- Plaid adapter migrated behind the Verbena contract
+- Plaid adapter migrated behind the Aubrieta contract
 - Teller adapter
 - SimpleFIN adapter
 - OFX/QFX/CSV import adapter
@@ -38,8 +38,8 @@
 - account visibility
 - household budgets/goals/bills/net worth
 
-## M4 — Verbena experience
-- Verbena design system
+## M4 — Aubrieta experience
+- Aubrieta design system
 - Overview
 - Transactions
 - Bills
