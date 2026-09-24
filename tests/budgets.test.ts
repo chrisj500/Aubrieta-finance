@@ -115,7 +115,9 @@ describe("budgets", () => {
     const user = await seedUser(db);
     const acc = await seedManualAccount(db, user.id);
     const food = await seedCategory(db, user.id, "Food");
-    await seedTxn(db, user.id, acc, { date: dateIn(0, 10), amountCents: -2000, categoryId: food });
+    // Keep the seeded spend inside the selected week so this test is
+    // deterministic regardless of which weekday the 15th falls on.
+    await seedTxn(db, user.id, acc, { date: dateIn(0, 15), amountCents: -2000, categoryId: food });
 
     const svc = createBudgetsService(db);
     const budget = await svc.create(user.id, { name: "Food", amountCents: 10000, categoryIds: [food] });
