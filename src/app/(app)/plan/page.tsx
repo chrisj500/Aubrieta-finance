@@ -29,6 +29,16 @@ interface Bill {
   last_paid_amount_cents: number | null;
   active: boolean;
   category_name: string | null;
+  account_name: string | null;
+  source: string;
+  source_confidence: string;
+  liability_kind: string | null;
+  minimum_payment_cents: number | null;
+  statement_balance_cents: number | null;
+  statement_date: string | null;
+  next_monthly_payment_cents: number | null;
+  liability_apr_bps: number | null;
+  liability_raw_status: string | null;
 }
 
 interface Debt {
@@ -659,6 +669,7 @@ export default function PlanPage() {
               <div key={b.id} className="flex items-center justify-between text-sm">
                 <span className="text-text">
                   {b.name} <span className="text-text-muted">· due {b.next_due_date}</span>
+                  {b.source === "provider" && <span className="ml-1 text-xs text-accent-text">· confirmed</span>}
                 </span>
                 <Money cents={b.amount_cents} />
               </div>
@@ -672,6 +683,7 @@ export default function PlanPage() {
               <div key={b.id} className="flex items-center justify-between text-sm">
                 <span className="text-text">
                   {b.name} <span className="text-text-muted">· {b.next_due_date}</span>
+                  {b.source === "provider" && <span className="ml-1 text-xs text-accent-text">· confirmed</span>}
                 </span>
                 <Money cents={b.amount_cents} />
               </div>
@@ -745,12 +757,26 @@ export default function PlanPage() {
                   <p className="text-xs text-text-muted">
                     {b.frequency}
                     {b.next_due_date ? ` · due ${b.next_due_date}` : ""}
+                    {b.source === "provider" ? " · confirmed by provider" : ""}
                     {b.last_paid_amount_cents !== null ? ` · last paid ${(b.last_paid_amount_cents / 100).toFixed(2)}` : ""}
                   </p>
+                  {b.source === "provider" && b.liability_kind === "credit_card" && (
+                    <p className="mt-0.5 text-xs text-text-muted">
+                      {b.minimum_payment_cents !== null && <>Minimum <Money cents={b.minimum_payment_cents} /></>}
+                      {b.minimum_payment_cents !== null && b.statement_balance_cents !== null ? " · " : ""}
+                      {b.statement_balance_cents !== null && <>Statement <Money cents={b.statement_balance_cents} /></>}
+                      {b.statement_date ? ` · statement ${b.statement_date}` : ""}
+                    </p>
+                  )}
+                  {b.source === "provider" && b.liability_kind === "mortgage" && b.liability_apr_bps !== null && (
+                    <p className="mt-0.5 text-xs text-text-muted">
+                      {(b.liability_apr_bps / 100).toFixed(2)}% rate
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Money cents={b.amount_cents} />
-                  {b.active && (
+                  {b.active && b.source !== "provider" && (
                     <Button
                       size="sm"
                       variant="ghost"
@@ -761,13 +787,15 @@ export default function PlanPage() {
                       {payBill.isPending && payBill.variables === b.id ? "Saving…" : "Paid"}
                     </Button>
                   )}
-                  <button
-                    onClick={() => removeBill.mutate(b)}
-                    className="text-text-muted hover:text-danger"
-                    aria-label={`Delete bill ${b.name}`}
-                  >
-                    <X className="h-3.5 w-3.5" aria-hidden="true" />
-                  </button>
+                  {b.source !== "provider" && (
+                    <button
+                      onClick={() => removeBill.mutate(b)}
+                      className="text-text-muted hover:text-danger"
+                      aria-label={`Delete bill ${b.name}`}
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
