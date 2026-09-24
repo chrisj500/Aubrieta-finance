@@ -1,5 +1,5 @@
 /**
- * Verbena provider-neutral financial aggregation contracts.
+ * Aubrieta provider-neutral financial aggregation contracts.
  *
  * IMPORTANT:
  * Domain code must depend on these normalized shapes, never directly on
