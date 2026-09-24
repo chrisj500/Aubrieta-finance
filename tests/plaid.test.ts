@@ -43,6 +43,9 @@ function fakeClient(overrides: Partial<PlaidClient> = {}): PlaidClient {
     async getTransactions() {
       return [];
     },
+    async getLiabilities() {
+      return [];
+    },
     async removeItem() {
       calls.removed += 1;
     },
