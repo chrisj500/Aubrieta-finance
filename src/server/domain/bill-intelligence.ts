@@ -308,16 +308,7 @@ export function createBillIntelligenceService(db: Db) {
       seriesId,
     );
 
-    // Never replace an authoritative liability bill with a detector result.
     if (!bill) {
-      const providerBill = await db.get<{ id: string }>(
-        `SELECT id FROM bills
-          WHERE user_id = ? AND provider_liability_id IS NOT NULL AND account_id = ? AND active = 1`,
-        userId,
-        c.accountId,
-      );
-      if (providerBill) return providerBill.id;
-
       const id = randomUUID();
       await db.run(
         `INSERT INTO bills (
@@ -396,8 +387,8 @@ export function createBillIntelligenceService(db: Db) {
       if (!amount) continue;
       const merchantKey = normalizeRecurringMerchant(stream.merchant ?? stream.description);
       const seriesKey = `provider:${provider}:${stream.externalId}`;
-      const existing = await db.get<{ id: string }>(
-        "SELECT id FROM recurring_series WHERE user_id = ? AND series_key = ?",
+      const existing = await db.get<{ id: string; user_dismissed: number }>(
+        "SELECT id, user_dismissed FROM recurring_series WHERE user_id = ? AND series_key = ?",
         userId,
         seriesKey,
       );
@@ -425,7 +416,8 @@ export function createBillIntelligenceService(db: Db) {
              typical_amount_cents = ?, last_amount_cents = ?, last_seen_date = ?,
              next_expected_date = ?, account_id = ?, source = 'provider',
              source_provider = ?, source_external_id = ?, confidence_bps = 9000,
-             active = 1, user_dismissed = 0, updated_at = ?
+             active = CASE WHEN user_dismissed = 1 THEN 0 ELSE 1 END,
+             updated_at = ?
            WHERE id = ?`,
           ...common,
           seriesId,
@@ -457,6 +449,16 @@ export function createBillIntelligenceService(db: Db) {
           ts,
           ts,
         );
+      }
+
+      if (existing?.user_dismissed) {
+        await db.run(
+          "UPDATE bills SET active = 0, updated_at = ? WHERE recurring_series_id = ?",
+          ts,
+          seriesId,
+        );
+        count++;
+        continue;
       }
 
       let bill = await db.get<{ id: string; user_overridden: number }>(
