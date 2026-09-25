@@ -6,6 +6,7 @@ import { createTellerService } from "@/server/teller/service";
 import { createSimpleFinService } from "@/server/simplefin/service";
 import { createAkoyaService } from "@/server/akoya/service";
 import { getDb } from "@/server/db/adapter";
+import { createBillIntelligenceService } from "@/server/domain/bill-intelligence";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
       ...simplefin,
       ...akoya,
     ];
-    return ok({ results });
+    const bills = await createBillIntelligenceService(db).refresh(session.userId);
+    return ok({ results, bills });
   })(req, { params: Promise.resolve({}) });
 }
