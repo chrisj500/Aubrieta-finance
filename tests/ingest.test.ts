@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createIngestService } from "@/server/domain/ingest";
+import { createIngestService, type IngestTxn } from "@/server/domain/ingest";
 import { createTestDb, seedManualAccount, seedUser } from "./helpers";
 
-function txn(over: Partial<Parameters<ReturnType<typeof createIngestService>["upsert"]>[0]> = {}) {
+function txn(over: Partial<IngestTxn> = {}): IngestTxn {
   return {
     plaidId: "plaid-1",
     accountRowId: "acc",
