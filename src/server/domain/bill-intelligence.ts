@@ -752,8 +752,9 @@ export function createBillIntelligenceService(db: Db) {
     const prefs = await db.get<{
       bill_reminders_enabled: number;
       bill_reminder_days: string;
+      notif_time: string;
     }>(
-      "SELECT bill_reminders_enabled, bill_reminder_days FROM user_settings WHERE user_id = ?",
+      "SELECT bill_reminders_enabled, bill_reminder_days, notif_time FROM user_settings WHERE user_id = ?",
       userId,
     );
     if (prefs && prefs.bill_reminders_enabled === 0) return 0;
@@ -771,6 +772,10 @@ export function createBillIntelligenceService(db: Db) {
       }
     }
 
+    const reminderTime =
+      prefs?.notif_time && /^\d{2}:\d{2}$/.test(prefs.notif_time)
+        ? prefs.notif_time
+        : "09:00";
     const occurrences = await db.all<{ id: string; due_date: string; status: string }>(
       `SELECT id, due_date, status FROM bill_occurrences
         WHERE user_id = ? AND status IN ('upcoming','overdue')`,
@@ -791,7 +796,7 @@ export function createBillIntelligenceService(db: Db) {
           userId,
           occ.id,
           dedupe,
-          `${todayISO()}T09:00:00.000Z`,
+          `${todayISO()}T${reminderTime}:00.000Z`,
           ts,
           ts,
         );
@@ -800,6 +805,7 @@ export function createBillIntelligenceService(db: Db) {
       }
       for (const days of offsets) {
         const scheduledDate = addDaysISO(occ.due_date, -days);
+        if (scheduledDate < todayISO()) continue;
         const eventType =
           days === 0
             ? "bill_due_today"
@@ -818,7 +824,7 @@ export function createBillIntelligenceService(db: Db) {
           occ.id,
           eventType,
           dedupe,
-          `${scheduledDate}T09:00:00.000Z`,
+          `${scheduledDate}T${reminderTime}:00.000Z`,
           ts,
           ts,
         );
