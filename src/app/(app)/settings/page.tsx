@@ -23,6 +23,7 @@ import { isSoloCandidate } from "@/lib/mobile-mode";
 import { storeHubUrl } from "@/lib/mobile-storage";
 import { UpdatesCard } from "@/components/updates-card";
 import { PlaidLinkLauncher } from "@/components/plaid-link-launcher";
+import { TellerSettingsCard } from "@/components/teller-settings-card";
 
 // Inline fetch-failure surface for a settings sub-card query: a calm alert + retry,
 // shown only when the query errored AND has no data (a background refetch error never
@@ -507,6 +508,7 @@ export default function SettingsPage() {
         </div>
       </Card>
 
+      <TellerSettingsCard setMsg={setMsg} setErr={setErr} />
       <PaydaysCard setMsg={setMsg} setErr={setErr} />
       <HubPanel setMsg={setMsg} setErr={setErr} />
       <PhoneImportPanel setMsg={setMsg} setErr={setErr} />
