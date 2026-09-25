@@ -213,13 +213,32 @@ async function upsertOccurrence(
 }
 
 export function createBillIntelligenceService(db: Db) {
-  async function upsertDetectedCandidate(userId: string, c: SeriesCandidate): Promise<string> {
+  async function upsertDetectedCandidate(userId: string, c: SeriesCandidate): Promise<string | null> {
     const ts = now();
-    const existingSeries = await db.get<{ id: string }>(
-      "SELECT id FROM recurring_series WHERE user_id = ? AND series_key = ?",
+
+    const providerSeries = await db.get<{ id: string }>(
+      `SELECT id FROM recurring_series
+        WHERE user_id = ? AND account_id = ? AND merchant_key = ?
+          AND source = 'provider' AND active = 1 AND user_dismissed = 0
+        LIMIT 1`,
+      userId,
+      c.accountId,
+      c.merchantKey,
+    );
+    if (providerSeries) {
+      const providerBill = await db.get<{ id: string }>(
+        "SELECT id FROM bills WHERE recurring_series_id = ? AND active = 1",
+        providerSeries.id,
+      );
+      return providerBill?.id ?? null;
+    }
+
+    const existingSeries = await db.get<{ id: string; user_dismissed: number }>(
+      "SELECT id, user_dismissed FROM recurring_series WHERE user_id = ? AND series_key = ?",
       userId,
       c.seriesKey,
     );
+    if (existingSeries?.user_dismissed) return null;
     const seriesId = existingSeries?.id ?? randomUUID();
 
     if (existingSeries) {
@@ -231,7 +250,7 @@ export function createBillIntelligenceService(db: Db) {
            last_seen_date = ?, next_expected_date = ?, account_id = ?,
            category_id = ?, source = 'detected', source_provider = NULL,
            source_external_id = NULL, confidence_bps = ?, active = 1,
-           updated_at = ?
+           user_dismissed = 0, updated_at = ?
          WHERE id = ?`,
         c.merchantKey,
         c.displayName,
@@ -256,9 +275,9 @@ export function createBillIntelligenceService(db: Db) {
            frequency, interval_days, typical_amount_cents, amount_variance_bps,
            occurrence_count, last_amount_cents, last_seen_date, next_expected_date,
            account_id, category_id, source, source_provider, source_external_id,
-           confidence_bps, active, created_at, updated_at
+           confidence_bps, active, user_dismissed, created_at, updated_at
          ) VALUES (?, ?, ?, 'outflow', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                   'detected', NULL, NULL, ?, 1, ?, ?)`,
+                   'detected', NULL, NULL, ?, 1, 0, ?, ?)`,
         seriesId,
         userId,
         c.seriesKey,
@@ -406,7 +425,7 @@ export function createBillIntelligenceService(db: Db) {
              typical_amount_cents = ?, last_amount_cents = ?, last_seen_date = ?,
              next_expected_date = ?, account_id = ?, source = 'provider',
              source_provider = ?, source_external_id = ?, confidence_bps = 9000,
-             active = 1, updated_at = ?
+             active = 1, user_dismissed = 0, updated_at = ?
            WHERE id = ?`,
           ...common,
           seriesId,
@@ -418,9 +437,9 @@ export function createBillIntelligenceService(db: Db) {
              frequency, interval_days, typical_amount_cents, amount_variance_bps,
              occurrence_count, last_amount_cents, last_seen_date, next_expected_date,
              account_id, category_id, source, source_provider, source_external_id,
-             confidence_bps, active, created_at, updated_at
+             confidence_bps, active, user_dismissed, created_at, updated_at
            ) VALUES (?, ?, ?, 'outflow', ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, NULL,
-                     'provider', ?, ?, 9000, 1, ?, ?)`,
+                     'provider', ?, ?, 9000, 1, 0, ?, ?)`,
           seriesId,
           userId,
           seriesKey,
@@ -525,12 +544,12 @@ export function createBillIntelligenceService(db: Db) {
       if (!candidate) continue;
       activeKeys.add(candidate.seriesKey);
       detected++;
-      await upsertDetectedCandidate(userId, candidate);
-      billsUpserted++;
+      const billId = await upsertDetectedCandidate(userId, candidate);
+      if (billId) billsUpserted++;
     }
 
     const existing = await db.all<{ id: string; series_key: string }>(
-      "SELECT id, series_key FROM recurring_series WHERE user_id = ? AND source = 'detected' AND active = 1",
+      "SELECT id, series_key FROM recurring_series WHERE user_id = ? AND source = 'detected' AND active = 1 AND user_dismissed = 0",
       userId,
     );
     for (const row of existing) {
