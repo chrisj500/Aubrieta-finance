@@ -39,6 +39,29 @@ interface Bill {
   next_monthly_payment_cents: number | null;
   liability_apr_bps: number | null;
   liability_raw_status: string | null;
+  recurring_series_id: string | null;
+  user_overridden: boolean;
+  occurrence_id?: string;
+  occurrence_status?: "upcoming" | "overdue" | "paid" | "skipped";
+  occurrence_actual_amount_cents?: number | null;
+  occurrence_paid_evidence?: string | null;
+}
+
+interface BillOccurrence {
+  id: string;
+  bill_id: string;
+  due_date: string;
+  expected_amount_cents: number;
+  actual_amount_cents: number | null;
+  status: "upcoming" | "overdue" | "paid" | "skipped";
+  paid_evidence: string | null;
+  source: string;
+  source_confidence: string;
+  bill_name?: string;
+  frequency?: string;
+  account_name?: string | null;
+  statement_balance_cents?: number | null;
+  minimum_payment_cents?: number | null;
 }
 
 interface Debt {
@@ -119,6 +142,22 @@ function addDays(d: Date, n: number): Date {
   const out = new Date(d);
   out.setDate(out.getDate() + n);
   return out;
+}
+
+function billSourceLabel(b: Pick<Bill, "source" | "source_confidence" | "user_overridden">): string {
+  if (b.user_overridden || b.source_confidence === "user") return "User override";
+  if (b.source === "provider" && b.source_confidence === "confirmed") return "Confirmed by provider";
+  if (b.source === "provider_recurring" || b.source_confidence === "provider") return "Provider recurring";
+  if (b.source === "detected" || b.source_confidence === "predicted") return "Detected recurring";
+  return "Manual";
+}
+
+function occurrenceSourceLabel(o: BillOccurrence): string {
+  if (o.source === "provider" && o.source_confidence === "confirmed") return "Confirmed by provider";
+  if (o.source === "provider_recurring" || o.source_confidence === "provider") return "Provider recurring";
+  if (o.source === "detected" || o.source_confidence === "predicted") return "Detected recurring";
+  if (o.source_confidence === "user") return "User override";
+  return "Manual";
 }
 
 export default function PlanPage() {
@@ -238,6 +277,20 @@ export default function PlanPage() {
       ),
   });
   const bills = useQuery({ queryKey: ["planning", "bills"], queryFn: () => api.get<{ bills: Bill[] }>("/api/planning/bills") });
+  const occurrenceRange = useMemo(() => {
+    const start = new Date();
+    start.setDate(start.getDate() - 45);
+    const end = new Date();
+    end.setDate(end.getDate() + 120);
+    return { from: iso(start), to: iso(end) };
+  }, []);
+  const occurrences = useQuery({
+    queryKey: ["planning", "bill-occurrences", occurrenceRange.from, occurrenceRange.to],
+    queryFn: () =>
+      api.get<{ occurrences: BillOccurrence[] }>(
+        `/api/planning/bill-occurrences?from=${occurrenceRange.from}&to=${occurrenceRange.to}`
+      ),
+  });
   const debts = useQuery({ queryKey: ["planning", "debts"], queryFn: () => api.get<{ debts: Debt[] }>("/api/planning/debts") });
   const goals = useQuery({ queryKey: ["planning", "goals"], queryFn: () => api.get<{ goals: Goal[] }>("/api/planning/goals") });
   const projection = useQuery({
@@ -246,7 +299,7 @@ export default function PlanPage() {
   });
   // Page-level failure sweep (mirrors dashboard/reports/budgets/transactions/accounts):
   // gated on no-data so a background refetch error never blanks rendered plan data.
-  const failedQueries = [digest, bills, debts, goals, projection].filter((q) => q.isError && !q.data);
+  const failedQueries = [digest, bills, occurrences, debts, goals, projection].filter((q) => q.isError && !q.data);
   const hasFailed = failedQueries.length > 0;
   const isRetrying = failedQueries.some((q) => q.isFetching);
   const retry = () => failedQueries.forEach((q) => q.refetch());
@@ -696,6 +749,72 @@ export default function PlanPage() {
         )}
       </Card>
 
+      {/* Bill occurrence calendar */}
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle>Bill calendar</CardTitle>
+            <p className="mt-1 text-xs text-text-muted">
+              Past 45 days and next 120 days · paid matching is automatic when evidence is strong.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={async () => {
+              try {
+                await api.post("/api/planning/bills/refresh");
+                invalidate();
+              } catch (e) {
+                setErr(e instanceof Error ? e.message : "Could not refresh bill intelligence.");
+              }
+            }}
+          >
+            Refresh bills
+          </Button>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {(occurrences.data?.occurrences ?? []).map((o) => (
+            <div
+              key={o.id}
+              className={`rounded-lg border px-3 py-2.5 text-sm ${
+                o.status === "overdue"
+                  ? "border-danger/40 bg-danger/5"
+                  : o.status === "paid"
+                    ? "border-success/30 bg-success/5"
+                    : "border-border"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-text">{o.bill_name ?? "Bill"}</p>
+                  <p className="text-xs text-text-muted">
+                    {o.due_date} · {occurrenceSourceLabel(o)}
+                  </p>
+                </div>
+                <Money cents={o.actual_amount_cents ?? o.expected_amount_cents} />
+              </div>
+              <p className={`mt-1 text-xs font-medium ${
+                o.status === "overdue"
+                  ? "text-danger"
+                  : o.status === "paid"
+                    ? "text-success"
+                    : "text-text-muted"
+              }`}>
+                {o.status === "paid"
+                  ? `Paid${o.paid_evidence ? ` · ${o.paid_evidence.replaceAll("_", " ")}` : ""}`
+                  : o.status === "overdue"
+                    ? "Overdue"
+                    : "Upcoming"}
+              </p>
+            </div>
+          ))}
+          {(occurrences.data?.occurrences ?? []).length === 0 && (
+            <p className="text-sm text-text-muted">No bill occurrences yet.</p>
+          )}
+        </div>
+      </Card>
+
       {/* Projection */}
       <Card>
         <CardTitle>12-month projection</CardTitle>
@@ -757,7 +876,7 @@ export default function PlanPage() {
                   <p className="text-xs text-text-muted">
                     {b.frequency}
                     {b.next_due_date ? ` · due ${b.next_due_date}` : ""}
-                    {b.source === "provider" ? " · confirmed by provider" : ""}
+                    {` · ${billSourceLabel(b)}`}
                     {b.last_paid_amount_cents !== null ? ` · last paid ${(b.last_paid_amount_cents / 100).toFixed(2)}` : ""}
                   </p>
                   {b.source === "provider" && b.liability_kind === "credit_card" && (
