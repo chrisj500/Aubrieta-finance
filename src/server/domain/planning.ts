@@ -450,6 +450,15 @@ export function createPlanningService(db: Db = getDb()) {
     },
 
     async removeBill(userId: string, id: string): Promise<void> {
+      const bill = await this.getBill(userId, id);
+      if (bill.recurring_series_id) {
+        await db.run(
+          "UPDATE recurring_series SET user_dismissed = 1, active = 0, updated_at = ? WHERE id = ? AND user_id = ?",
+          now(),
+          bill.recurring_series_id,
+          userId,
+        );
+      }
       await db.run("DELETE FROM bills WHERE id = ? AND user_id = ?", id, userId);
     },
 
