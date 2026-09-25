@@ -4,7 +4,7 @@ import { getDb, type Db } from "@/server/db/adapter";
 import type { PlaidClient, PlaidCreds, PlaidEnvironment } from "./adapter";
 import { realPlaidClient } from "./real";
 import { createPlaidProvider, type PlaidConnectionSecret } from "@/server/providers/plaid";
-import { ensureProviderConnection } from "@/server/providers/connections";
+import { ensureAccountProviderRef, ensureProviderConnection } from "@/server/providers/connections";
 import { safeSyncProviderConnection } from "@/server/providers/sync";
 
 export interface SyncResult {
@@ -85,6 +85,24 @@ export function createSyncService(
         item.cursor,
         connectionId,
       );
+    }
+
+    // Legacy Plaid accounts can be created after migration 023 (tests,
+    // imports, older clients). Repair their provider refs before shared sync.
+    const legacyAccounts = await db.all<{ id: string; plaid_account_id: string | null }>(
+      "SELECT id, plaid_account_id FROM accounts WHERE item_id = ? AND user_id = ?",
+      itemRowId,
+      userId,
+    );
+    for (const account of legacyAccounts) {
+      if (!account.plaid_account_id) continue;
+      await ensureAccountProviderRef(db, {
+        userId,
+        accountId: account.id,
+        connectionId,
+        provider: "plaid",
+        externalAccountId: account.plaid_account_id,
+      });
     }
 
     const secret: PlaidConnectionSecret = { creds, accessToken };
