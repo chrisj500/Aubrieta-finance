@@ -462,10 +462,11 @@ export function createBillIntelligenceService(db: Db) {
 
     let bill = await db.get<{
       id: string;
+      source: string;
       user_overridden: number;
       provider_liability_id: string | null;
     }>(
-      "SELECT id, user_overridden, provider_liability_id FROM bills WHERE recurring_series_id = ?",
+      "SELECT id, source, user_overridden, provider_liability_id FROM bills WHERE recurring_series_id = ?",
       seriesId,
     );
 
@@ -523,8 +524,12 @@ export function createBillIntelligenceService(db: Db) {
         ts,
         seriesId,
       );
-      bill = { id, user_overridden: 0, provider_liability_id: null };
-    } else if (!bill.user_overridden && !bill.provider_liability_id) {
+      bill = { id, source: "detected", user_overridden: 0, provider_liability_id: null };
+    } else if (bill.source === "manual" || bill.user_overridden) {
+      // The recurring series may enrich a user-owned bill, but detection must
+      // never take ownership of its name/schedule/source on later passes.
+      return bill.id;
+    } else if (!bill.provider_liability_id) {
       await db.run(
         `UPDATE bills SET
            name = ?, amount_cents = ?, frequency = ?, due_day = ?,
