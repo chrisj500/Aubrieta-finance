@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
+import { hasWindow } from "@/lib/browser-env";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,10 +40,10 @@ export function AkoyaSettingsCard({
   const [providerId, setProviderId] = useState("mikomo");
 
   useEffect(() => {
-    if (!redirectUri && typeof window !== "undefined") {
+    if (!redirectUri && hasWindow()) {
       setRedirectUri(`${window.location.origin}/api/akoya/callback`);
     }
-    if (typeof window !== "undefined") {
+    if (hasWindow()) {
       const url = new URL(window.location.href);
       const status = url.searchParams.get("akoya");
       if (status === "connected") {
