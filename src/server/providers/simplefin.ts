@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import type {
   FinancialProvider,
   NormalizedAccountType,
@@ -34,6 +35,11 @@ export interface SimpleFinProviderOptions {
   now?: () => Date;
   initialLookbackDays?: number;
   overlapDays?: number;
+  /**
+   * Optional resolver for tests/special deployments. Production defaults to
+   * node:dns lookup and rejects private/link-local resolutions before fetch.
+   */
+  resolveHost?: (hostname: string) => Promise<string[]>;
 }
 
 interface SimpleFinError {
@@ -178,6 +184,34 @@ function assertHttpsUrl(raw: string, label: string): URL {
     throw new Error(`${label} points to a blocked local or link-local address.`);
   }
   return url;
+}
+
+function isUnsafeResolvedAddress(address: string): boolean {
+  const a = address.toLowerCase();
+  if (
+    a === "::" ||
+    a === "::1" ||
+    a.startsWith("fc") ||
+    a.startsWith("fd") ||
+    /^fe[89ab]/.test(a)
+  ) {
+    return true;
+  }
+  const mapped = a.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isUnsafeResolvedAddress(mapped[1]);
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(a)) return false;
+  const parts = a.split(".").map(Number);
+  if (parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [x, y] = parts;
+  return (
+    x === 0 ||
+    x === 10 ||
+    x === 127 ||
+    (x === 169 && y === 254) ||
+    (x === 172 && y >= 16 && y <= 31) ||
+    (x === 192 && y === 168) ||
+    x >= 224
+  );
 }
 
 export function splitSimpleFinAccessUrl(accessUrl: string): {
@@ -334,9 +368,26 @@ export function createSimpleFinProvider(options: SimpleFinProviderOptions = {}):
   const now = options.now ?? (() => new Date());
   const initialLookbackDays = options.initialLookbackDays ?? DEFAULT_LOOKBACK_DAYS;
   const overlapDays = options.overlapDays ?? DEFAULT_OVERLAP_DAYS;
+  const resolveHost =
+    options.resolveHost ??
+    (options.fetchImpl
+      ? async () => []
+      : async (hostname: string) => {
+          const rows = await lookup(hostname, { all: true, verbatim: true });
+          return rows.map((row) => row.address);
+        });
+
+  async function assertSafeRemoteUrl(url: URL, label: string): Promise<void> {
+    const addresses = await resolveHost(url.hostname);
+    if (addresses.some(isUnsafeResolvedAddress)) {
+      throw new Error(`${label} resolves to a blocked local, private, or link-local address.`);
+    }
+  }
 
   async function claimSetupToken(setupToken: string): Promise<string> {
     const claimUrl = decodeSimpleFinSetupToken(setupToken);
+    const claimParsed = new URL(claimUrl);
+    await assertSafeRemoteUrl(claimParsed, "SimpleFIN claim URL");
     let response: Response;
     try {
       response = await fetchImpl(claimUrl, {
@@ -366,6 +417,8 @@ export function createSimpleFinProvider(options: SimpleFinProviderOptions = {}):
     } = {},
   ): Promise<SimpleFinAccountSet> {
     const { baseUrl, authorization } = splitSimpleFinAccessUrl(accessUrl);
+    const baseParsed = new URL(baseUrl);
+    await assertSafeRemoteUrl(baseParsed, "SimpleFIN access URL");
     const makeUrl = (version2: boolean) => {
       const url = new URL(`${baseUrl}/accounts`);
       if (version2) url.searchParams.set("version", "2");
