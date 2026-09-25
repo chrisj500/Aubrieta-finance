@@ -13,6 +13,7 @@ import {
   PlaidClient,
   PlaidCreds,
   PlaidLiability,
+  PlaidRecurringStream,
   PlaidSyncResult,
   PlaidTestResult,
   PlaidTransaction,
@@ -231,6 +232,74 @@ export const realPlaidClient: PlaidClient = {
     }
 
     return out;
+  },
+
+  async getRecurringStreams(creds, accessToken) {
+    const client = clientFor(creds);
+    const res = await client.transactionsRecurringGet({
+      access_token: accessToken,
+    });
+    type RawStream = {
+      stream_id: string;
+      account_id: string;
+      description: string;
+      merchant_name?: string | null;
+      frequency?: string | null;
+      average_amount?: { amount?: number | null } | number | null;
+      last_amount?: { amount?: number | null } | number | null;
+      last_date?: string | null;
+      predicted_next_date?: string | null;
+      status?: string | null;
+    };
+    const map = (
+      stream: RawStream,
+      direction: "inflow" | "outflow",
+    ): PlaidRecurringStream => {
+      const amountValue = (
+        value: RawStream["average_amount"] | RawStream["last_amount"],
+      ): number | null => {
+        if (typeof value === "number") return cents(value);
+        if (value && typeof value === "object" && typeof value.amount === "number") {
+          return cents(value.amount);
+        }
+        return null;
+      };
+      const freq = (stream.frequency ?? "").toLowerCase();
+      const cadence: PlaidRecurringStream["cadence"] =
+        freq.includes("week") && !freq.includes("bi")
+          ? "weekly"
+          : freq.includes("biweekly") || freq.includes("semi_month")
+            ? "biweekly"
+            : freq.includes("month") && !freq.includes("quarter")
+              ? "monthly"
+              : freq.includes("quarter")
+                ? "quarterly"
+                : freq.includes("year")
+                  ? "yearly"
+                  : "unknown";
+      return {
+        id: stream.stream_id,
+        accountId: stream.account_id,
+        direction,
+        merchantName: stream.merchant_name ?? null,
+        description: stream.description,
+        cadence,
+        averageAmountCents: amountValue(stream.average_amount),
+        lastAmountCents: amountValue(stream.last_amount),
+        lastDate: stream.last_date ?? null,
+        nextExpectedDate: stream.predicted_next_date ?? null,
+        active: !["MATURED", "INACTIVE"].includes((stream.status ?? "").toUpperCase()),
+      };
+    };
+
+    const data = res.data as unknown as {
+      inflow_streams?: RawStream[];
+      outflow_streams?: RawStream[];
+    };
+    return [
+      ...(data.inflow_streams ?? []).map((s) => map(s, "inflow")),
+      ...(data.outflow_streams ?? []).map((s) => map(s, "outflow")),
+    ];
   },
 
   async removeItem(creds, accessToken) {
