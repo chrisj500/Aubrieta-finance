@@ -193,13 +193,15 @@ export async function syncProviderConnection(
     );
     nextCursor = res.nextCursor.value;
 
-    const ingestRows = async (
-      rows: typeof res.added,
-      mode: "added" | "modified",
-    ) => {
+    const ingestRows = async (rows: typeof res.added) => {
       for (const txn of rows) {
         const accountId = rowByExternal.get(txn.accountExternalId);
         if (!accountId) continue;
+        const existingRef = await db.get<{ transaction_id: string }>(
+          "SELECT transaction_id FROM transaction_provider_refs WHERE provider = ? AND external_transaction_id = ?",
+          providerKind,
+          txn.externalId,
+        );
         const category =
           (await categories.match(
             input.userId,
@@ -226,13 +228,13 @@ export async function syncProviderConnection(
           },
           category?.id ?? null,
         );
-        if (mode === "added") added++;
-        else modified++;
+        if (existingRef) modified++;
+        else added++;
       }
     };
 
-    await ingestRows(res.added, "added");
-    await ingestRows(res.modified, "modified");
+    await ingestRows(res.added);
+    await ingestRows(res.modified);
 
     for (const externalId of res.removedExternalIds) {
       await ingest.remove(providerKind, externalId);
