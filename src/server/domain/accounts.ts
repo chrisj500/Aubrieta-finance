@@ -42,7 +42,17 @@ export function createAccountsService(db: Db = getDb()) {
   return {
     async list(userId: string): Promise<AccountRow[]> {
       return db.all<AccountRow>(
-        `SELECT a.*, i.institution_name, u.is_demo,
+        `SELECT a.*,
+          COALESCE(
+            i.institution_name,
+            (SELECT pc.institution_name
+               FROM account_provider_refs apr
+               JOIN provider_connections pc ON pc.id = apr.connection_id
+              WHERE apr.account_id = a.id
+              ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
+              LIMIT 1)
+          ) AS institution_name,
+          u.is_demo,
                 COALESCE((SELECT SUM(t.amount_cents) FROM transactions t WHERE t.account_id = a.id AND t.pending = 1 AND t.exclude_from_budgets = 0 AND t.is_transfer = 0), 0) AS pending_balance_cents
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
@@ -62,7 +72,17 @@ export function createAccountsService(db: Db = getDb()) {
     /** Removed accounts (soft-deleted) so the user can restore them. */
     async listDeleted(userId: string): Promise<AccountRow[]> {
       return db.all<AccountRow>(
-        `SELECT a.*, i.institution_name, u.is_demo
+        `SELECT a.*,
+          COALESCE(
+            i.institution_name,
+            (SELECT pc.institution_name
+               FROM account_provider_refs apr
+               JOIN provider_connections pc ON pc.id = apr.connection_id
+              WHERE apr.account_id = a.id
+              ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
+              LIMIT 1)
+          ) AS institution_name,
+          u.is_demo
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
            JOIN users u ON u.id = a.user_id
@@ -97,7 +117,17 @@ export function createAccountsService(db: Db = getDb()) {
         }
       }
       return db.all<AccountRow>(
-        `SELECT a.*, i.institution_name, u.is_demo
+        `SELECT a.*,
+          COALESCE(
+            i.institution_name,
+            (SELECT pc.institution_name
+               FROM account_provider_refs apr
+               JOIN provider_connections pc ON pc.id = apr.connection_id
+              WHERE apr.account_id = a.id
+              ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
+              LIMIT 1)
+          ) AS institution_name,
+          u.is_demo
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
            JOIN users u ON u.id = a.user_id
@@ -109,7 +139,17 @@ export function createAccountsService(db: Db = getDb()) {
 
     async get(userId: string, id: string): Promise<AccountRow> {
       const row = await db.get<AccountRow>(
-        `SELECT a.*, i.institution_name, u.is_demo
+        `SELECT a.*,
+          COALESCE(
+            i.institution_name,
+            (SELECT pc.institution_name
+               FROM account_provider_refs apr
+               JOIN provider_connections pc ON pc.id = apr.connection_id
+              WHERE apr.account_id = a.id
+              ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
+              LIMIT 1)
+          ) AS institution_name,
+          u.is_demo
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
            JOIN users u ON u.id = a.user_id
