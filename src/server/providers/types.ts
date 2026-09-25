@@ -6,7 +6,7 @@
  * Plaid/Teller/SimpleFIN SDK types.
  */
 
-export type ProviderKind = "plaid" | "teller" | "simplefin" | "file";
+export type ProviderKind = "plaid" | "teller" | "simplefin" | "akoya" | "file";
 
 export type ProviderCapability =
   | "accounts"
