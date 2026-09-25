@@ -24,6 +24,7 @@ CREATE TABLE recurring_series (
   source_external_id TEXT,
   confidence_bps INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,
+  user_dismissed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE (user_id, series_key)
