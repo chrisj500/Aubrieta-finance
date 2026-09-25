@@ -56,7 +56,9 @@ function mapTransaction(t: Awaited<ReturnType<PlaidClient["syncTransactions"]>>[
   return {
     externalId: t.id,
     accountExternalId: t.accountId,
-    amountMinor: t.amountCents,
+    // Canonical Aubrieta sign: positive=inflow, negative=outflow.
+    // Plaid reports positive amounts as money leaving the account.
+    amountMinor: -t.amountCents,
     currency: "USD",
     date: t.date,
     authorizedDate: t.authorizedDate,
@@ -64,6 +66,8 @@ function mapTransaction(t: Awaited<ReturnType<PlaidClient["syncTransactions"]>>[
     merchant: t.merchantName,
     pending: t.pending,
     categoryHint: t.personalFinanceCategory ?? t.categoryPath,
+    categoryPath: t.categoryPath,
+    personalFinanceCategory: t.personalFinanceCategory,
   };
 }
 
