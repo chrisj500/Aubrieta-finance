@@ -763,11 +763,15 @@ function NotificationsSecurityCard({ setMsg, setErr }: { setMsg: (s: string | nu
           notifEnabled: boolean;
           notifFrequency: "daily" | "weekly";
           notifTime: string;
+          billRemindersEnabled: boolean;
+          billReminderDays: number[];
         };
         await syncNotificationSchedule(db, {
           enabled: next.notifEnabled,
           frequency: next.notifFrequency,
           time: next.notifTime,
+          billRemindersEnabled: next.billRemindersEnabled,
+          billReminderDays: next.billReminderDays,
         });
       }
     } catch (e) {
