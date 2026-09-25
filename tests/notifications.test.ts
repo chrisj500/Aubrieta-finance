@@ -16,6 +16,8 @@ describe("notifications prefs (P11)", () => {
     expect(d.emailEnabled).toBe(false);
     expect(d.emailAddress).toBeNull();
     expect(d.biometricEnabled).toBe(false);
+    expect(d.billRemindersEnabled).toBe(true);
+    expect(d.billReminderDays).toEqual([7, 3, 1, 0]);
 
     const updated = await svc.update(user.id, {
       notifEnabled: true,
@@ -25,12 +27,16 @@ describe("notifications prefs (P11)", () => {
       emailAddress: "me@example.com",
       emailFrequency: "daily",
       biometricEnabled: true,
+      billRemindersEnabled: true,
+      billReminderDays: [0, 1, 7, 3, 3],
     });
     expect(updated.notifEnabled).toBe(true);
     expect(updated.notifFrequency).toBe("daily");
     expect(updated.notifTime).toBe("07:30");
     expect(updated.emailAddress).toBe("me@example.com");
     expect(updated.biometricEnabled).toBe(true);
+    expect(updated.billRemindersEnabled).toBe(true);
+    expect(updated.billReminderDays).toEqual([7, 3, 1, 0]);
 
     const reread = await svc.get(user.id);
     expect(reread).toEqual(updated);
@@ -46,6 +52,23 @@ describe("notifications prefs (P11)", () => {
     expect(p.notifEnabled).toBe(true);
     expect(p.notifFrequency).toBe("weekly"); // untouched
     expect(p.emailEnabled).toBe(false); // untouched
+  });
+
+  it("normalizes bill reminder offsets and preserves them on partial updates", async () => {
+    const db = createTestDb();
+    const { user } = await createSoloBootstrapService(db).bootstrap({ displayName: "Phone" });
+    const svc = createNotificationsService(db);
+
+    const updated = await svc.update(user.id, {
+      billRemindersEnabled: false,
+      billReminderDays: [30, 7, 7, 1, -1, 31] as number[],
+    });
+    expect(updated.billRemindersEnabled).toBe(false);
+    expect(updated.billReminderDays).toEqual([30, 7, 1]);
+
+    const partial = await svc.update(user.id, { notifEnabled: true });
+    expect(partial.billRemindersEnabled).toBe(false);
+    expect(partial.billReminderDays).toEqual([30, 7, 1]);
   });
 
   it("invalid frequencies normalize to weekly", async () => {
