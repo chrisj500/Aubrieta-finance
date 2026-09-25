@@ -119,12 +119,9 @@ export function createAkoyaService(db: Db) {
       secret = { ...secret, tokens };
     }
     secret = { ...secret, interactionType, lastAccessAt };
-    // Persist rotating refresh tokens and the last real end-user access time.
-    if (interactionType === "USER") {
-      await storeConnectionSecret(userId, connectionId, secret);
-    } else if (secret.tokens !== (await loadStoredSecret(userId, connectionId)).tokens) {
-      await storeConnectionSecret(userId, connectionId, secret);
-    }
+    // Persist rotating refresh tokens. For BATCH access, lastAccessAt remains
+    // the timestamp of the most recent real end-user access.
+    await storeConnectionSecret(userId, connectionId, secret);
     return secret;
   }
 
