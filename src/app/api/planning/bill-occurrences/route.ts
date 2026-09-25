@@ -24,10 +24,10 @@ export async function GET(req: NextRequest) {
     const from = parsed.data.from ?? addDaysISO(todayISO(), -31);
     const to = parsed.data.to ?? addDaysISO(todayISO(), 120);
     const intelligence = createBillIntelligenceService(getDb());
-    await intelligence.detectRecurring(userId);
+    // Page reads must not discover new financial obligations. Recurring
+    // detection/payment matching/reminder scheduling run after sync or through
+    // the explicit Refresh bills action.
     await intelligence.ensureOccurrences(userId);
-    await intelligence.matchPayments(userId);
-    await intelligence.scheduleReminders(userId);
     return ok({
       occurrences: await intelligence.listOccurrences(userId, from, to),
     });
