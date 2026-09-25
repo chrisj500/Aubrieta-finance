@@ -15,6 +15,7 @@ export async function ensureProviderConnection(
     institutionExternalId: string | null;
     institutionName: string | null;
     status?: string;
+    environment?: string | null;
     legacyPlaidItemId?: string | null;
   },
 ): Promise<string> {
@@ -40,13 +41,14 @@ export async function ensureProviderConnection(
     await db.run(
       `UPDATE provider_connections SET
          external_connection_id = ?, institution_external_id = ?, institution_name = ?,
-         status = ?, capabilities_json = ?, updated_at = ?
+         status = ?, capabilities_json = ?, environment = COALESCE(?, environment), updated_at = ?
        WHERE id = ? AND user_id = ?`,
       input.externalConnectionId,
       input.institutionExternalId,
       input.institutionName,
       input.status ?? "active",
       capabilities,
+      input.environment ?? null,
       ts,
       id,
       input.userId,
@@ -55,9 +57,9 @@ export async function ensureProviderConnection(
     await db.run(
       `INSERT INTO provider_connections (
          id, user_id, provider, external_connection_id, institution_external_id,
-         institution_name, status, capabilities_json, legacy_plaid_item_id,
+         institution_name, status, capabilities_json, environment, legacy_plaid_item_id,
          created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       input.userId,
       input.provider.descriptor.kind,
@@ -66,6 +68,7 @@ export async function ensureProviderConnection(
       input.institutionName,
       input.status ?? "active",
       capabilities,
+      input.environment ?? null,
       input.legacyPlaidItemId ?? null,
       ts,
       ts,

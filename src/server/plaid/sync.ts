@@ -1,23 +1,11 @@
-import { randomUUID } from "node:crypto";
 import { decrypt } from "@/lib/crypto";
 import { apiErrors } from "@/lib/api";
 import { getDb, type Db } from "@/server/db/adapter";
 import type { PlaidClient, PlaidCreds, PlaidEnvironment } from "./adapter";
 import { realPlaidClient } from "./real";
-import { createCategoriesService } from "@/server/domain/categories";
-import { createIngestService } from "@/server/domain/ingest";
-import { markLinkedTransfers } from "@/server/domain/transfers";
-import { createPlaidProvider, legacyAccountType, type PlaidConnectionSecret } from "@/server/providers/plaid";
-import { ensureProviderConnection } from "@/server/providers/connections";
-import { syncProviderLiabilities } from "@/server/domain/liabilities";
-
-function now(): string {
-  return new Date().toISOString();
-}
-
-function today(): string {
-  return now().slice(0, 10);
-}
+import { createPlaidProvider, type PlaidConnectionSecret } from "@/server/providers/plaid";
+import { ensureAccountProviderRef, ensureProviderConnection } from "@/server/providers/connections";
+import { safeSyncProviderConnection } from "@/server/providers/sync";
 
 export interface SyncResult {
   itemId: string;
@@ -29,7 +17,10 @@ export interface SyncResult {
   error?: string;
 }
 
-export function createSyncService(db: Db = getDb(), clientFactory: (creds: PlaidCreds) => PlaidClient = () => realPlaidClient) {
+export function createSyncService(
+  db: Db = getDb(),
+  clientFactory: (creds: PlaidCreds) => PlaidClient = () => realPlaidClient,
+) {
   function aad(userId: string, recordId: string): string {
     return `${userId}:plaid:${recordId}`;
   }
@@ -41,18 +32,26 @@ export function createSyncService(db: Db = getDb(), clientFactory: (creds: Plaid
       access_token_enc: string;
       cursor: string | null;
       environment: PlaidEnvironment;
+      institution_id: string | null;
       institution_name: string | null;
     }>(
-      "SELECT id, plaid_item_id, access_token_enc, cursor, environment, institution_name FROM plaid_items WHERE id = ? AND user_id = ?",
+      `SELECT id, plaid_item_id, access_token_enc, cursor, environment,
+              institution_id, institution_name
+         FROM plaid_items
+        WHERE id = ? AND user_id = ?`,
       itemRowId,
-      userId
+      userId,
     );
     if (!item) throw apiErrors.notFound("Item");
 
-    const credsRow = await db.get<{ id: string; client_id_enc: string; secret_enc: string }>(
+    const credsRow = await db.get<{
+      id: string;
+      client_id_enc: string;
+      secret_enc: string;
+    }>(
       "SELECT id, client_id_enc, secret_enc FROM plaid_credentials WHERE user_id = ? AND environment = ?",
       userId,
-      item.environment
+      item.environment,
     );
     if (!credsRow) throw apiErrors.notFound("Plaid credentials");
 
@@ -62,173 +61,112 @@ export function createSyncService(db: Db = getDb(), clientFactory: (creds: Plaid
       environment: item.environment,
     };
     const client = clientFactory(creds);
-    const accessToken = decrypt(item.access_token_enc, aad(userId, item.id));
     const provider = createPlaidProvider(client);
-    const providerSecret: PlaidConnectionSecret = { creds, accessToken };
+    const accessToken = decrypt(item.access_token_enc, aad(userId, item.id));
     const connectionId = await ensureProviderConnection(db, {
       userId,
       provider,
       externalConnectionId: item.plaid_item_id,
-      institutionExternalId: null,
+      institutionExternalId: item.institution_id,
       institutionName: item.institution_name,
       status: "active",
+      environment: item.environment,
       legacyPlaidItemId: item.id,
     });
 
-    const accountRows = await db.all<{ id: string; plaid_account_id: string | null; type: string | null; type_override: number; hidden: number }>(
-      "SELECT id, plaid_account_id, type, type_override, hidden FROM accounts WHERE item_id = ?",
-      itemRowId
+    // Preserve a legacy cursor that predates migration 024.
+    const connection = await db.get<{ sync_cursor: string | null }>(
+      "SELECT sync_cursor FROM provider_connections WHERE id = ?",
+      connectionId,
     );
-    const plaidToRow = new Map<string, string>();
-    const plaidMeta = new Map<string, { type: string | null; typeOverride: number }>();
-    for (const a of accountRows) {
-      if (a.plaid_account_id && a.hidden === 0) {
-        plaidToRow.set(a.plaid_account_id, a.id);
-        plaidMeta.set(a.plaid_account_id, { type: a.type, typeOverride: a.type_override });
-      }
-    }
-
-    const ingest = createIngestService(db);
-    const categories = createCategoriesService(db);
-    // Ensure system categories exist before ingest matching, so transactions
-    // get auto-categorized on their first sync even if the user never opened
-    // the Categories tab.
-    await categories.ensureSystem(userId);
-
-    let cursor = item.cursor ?? null;
-    let added = 0;
-    let modified = 0;
-    let removed = 0;
-    let hasMore = true;
-    let guard = 0;
-
-    while (hasMore && guard < 20) {
-      guard++;
-      const res = await client.syncTransactions(creds, accessToken, cursor);
-
-      for (const t of res.added) {
-        const rowId = plaidToRow.get(t.accountId);
-        if (!rowId) continue;
-        const cat = await categories.match(userId, t.categoryPath, t.personalFinanceCategory);
-        await ingest.upsert(
-          {
-            plaidId: t.id,
-            accountRowId: rowId,
-            // Plaid sign: positive = money out (debit) → store negative (expense).
-            amountCents: -t.amountCents,
-            date: t.date,
-            authorizedDate: t.authorizedDate,
-            name: t.name,
-            merchantName: t.merchantName,
-            categoryPath: t.categoryPath,
-            personalFinanceCategory: t.personalFinanceCategory,
-            pending: t.pending,
-          },
-          cat?.id ?? null
-        );
-        added++;
-      }
-      for (const t of res.modified) {
-        const rowId = plaidToRow.get(t.accountId);
-        if (!rowId) continue;
-        const cat = await categories.match(userId, t.categoryPath, t.personalFinanceCategory);
-        await ingest.upsert(
-          {
-            plaidId: t.id,
-            accountRowId: rowId,
-            // Plaid sign: positive = money out (debit) → store negative (expense).
-            amountCents: -t.amountCents,
-            date: t.date,
-            authorizedDate: t.authorizedDate,
-            name: t.name,
-            merchantName: t.merchantName,
-            categoryPath: t.categoryPath,
-            personalFinanceCategory: t.personalFinanceCategory,
-            pending: t.pending,
-          },
-          cat?.id ?? null
-        );
-        modified++;
-      }
-      for (const r of res.removed) {
-        await ingest.remove(r.transactionId);
-        removed++;
-      }
-
-      cursor = res.nextCursor;
-      hasMore = res.hasMore;
-    }
-
-    await markLinkedTransfers(db, userId);
-
-    // Refresh balances through the provider-neutral account contract.
-    const freshAccounts = await provider.listAccounts(providerSecret);
-    for (const a of freshAccounts) {
-      const rowId = plaidToRow.get(a.externalId);
-      if (!rowId) continue;
-      const balance = a.currentBalanceMinor ?? a.availableBalanceMinor ?? 0;
-      const legacyType = legacyAccountType(a.type);
-      const balanceSign = legacyType === "credit" || legacyType === "loan" ? -1 : 1;
+    if (!connection?.sync_cursor && item.cursor) {
       await db.run(
-        "UPDATE accounts SET current_balance_cents = ?, available_balance_cents = ?, currency = ? WHERE id = ?",
-        a.currentBalanceMinor == null ? null : a.currentBalanceMinor * balanceSign,
-        a.availableBalanceMinor == null ? null : a.availableBalanceMinor * balanceSign,
-        a.currency,
-        rowId
-      );
-      await db.run(
-        `INSERT INTO balance_history (id, account_id, date, balance_cents) VALUES (?, ?, ?, ?)
-         ON CONFLICT(account_id, date) DO UPDATE SET balance_cents = excluded.balance_cents`,
-        randomUUID(),
-        rowId,
-        today(),
-        balance * balanceSign
+        "UPDATE provider_connections SET sync_cursor = ? WHERE id = ?",
+        item.cursor,
+        connectionId,
       );
     }
 
-    // Liabilities are best-effort: Items without applicable credit/loan
-    // accounts can reject liabilities/get. Do not fail transaction sync for
-    // an unsupported product, but when data is available it is authoritative.
-    if (provider.getLiabilities) {
-      try {
-        const liabilities = await provider.getLiabilities(providerSecret);
-        await syncProviderLiabilities(db, userId, connectionId, "plaid", liabilities);
-      } catch {
-        // Keep the last known liability snapshot; a later sync can refresh it.
-      }
+    // Legacy Plaid accounts can be created after migration 023 (tests,
+    // imports, older clients). Repair their provider refs before shared sync.
+    const legacyAccounts = await db.all<{ id: string; plaid_account_id: string | null }>(
+      "SELECT id, plaid_account_id FROM accounts WHERE item_id = ? AND user_id = ?",
+      itemRowId,
+      userId,
+    );
+    for (const account of legacyAccounts) {
+      if (!account.plaid_account_id) continue;
+      await ensureAccountProviderRef(db, {
+        userId,
+        accountId: account.id,
+        connectionId,
+        provider: "plaid",
+        externalAccountId: account.plaid_account_id,
+      });
     }
 
-    const syncedAt = now();
-    await db.run(
-      "UPDATE plaid_items SET cursor = ?, last_sync_at = ?, status = 'active' WHERE id = ?",
-      cursor,
-      syncedAt,
-      itemRowId
+    const secret: PlaidConnectionSecret = { creds, accessToken };
+    const result = await safeSyncProviderConnection(db, {
+      userId,
+      connectionId,
+      provider,
+      connectionSecret: secret,
+    });
+
+    const state = await db.get<{
+      sync_cursor: string | null;
+      last_sync_at: string | null;
+      status: string;
+    }>(
+      "SELECT sync_cursor, last_sync_at, status FROM provider_connections WHERE id = ?",
+      connectionId,
     );
     await db.run(
-      "UPDATE provider_connections SET status = 'active', updated_at = ? WHERE id = ?",
-      syncedAt,
-      connectionId
+      "UPDATE plaid_items SET cursor = ?, last_sync_at = ?, status = ? WHERE id = ?",
+      state?.sync_cursor ?? item.cursor,
+      state?.last_sync_at ?? null,
+      state?.status ?? (result.ok ? "active" : "error"),
+      itemRowId,
     );
 
-    return { itemId: itemRowId, institutionName: item.institution_name, added, modified, removed, ok: true };
+    return {
+      itemId: itemRowId,
+      institutionName: result.institutionName ?? item.institution_name,
+      added: result.added,
+      modified: result.modified,
+      removed: result.removed,
+      ok: result.ok,
+      error: result.error,
+    };
   }
 
   return {
-    /** Sync one item; marks the item 'error' and reports a friendly message on failure. */
     async syncOne(userId: string, itemRowId: string): Promise<SyncResult> {
       try {
         return await syncItem(userId, itemRowId);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Sync failed.";
-        await db.run("UPDATE plaid_items SET status = 'error' WHERE id = ?", itemRowId).catch(() => undefined);
-        return { itemId: itemRowId, institutionName: null, added: 0, modified: 0, removed: 0, ok: false, error: message };
+        await db.run(
+          "UPDATE plaid_items SET status = 'error' WHERE id = ?",
+          itemRowId,
+        ).catch(() => undefined);
+        return {
+          itemId: itemRowId,
+          institutionName: null,
+          added: 0,
+          modified: 0,
+          removed: 0,
+          ok: false,
+          error: message,
+        };
       }
     },
 
-    /** Sync every item for the user; never throws. */
     async syncAll(userId: string): Promise<SyncResult[]> {
-      const items = await db.all<{ id: string }>("SELECT id FROM plaid_items WHERE user_id = ?", userId);
+      const items = await db.all<{ id: string }>(
+        "SELECT id FROM plaid_items WHERE user_id = ?",
+        userId,
+      );
       const results: SyncResult[] = [];
       for (const item of items) {
         results.push(await this.syncOne(userId, item.id));

@@ -56,7 +56,9 @@ function mapTransaction(t: Awaited<ReturnType<PlaidClient["syncTransactions"]>>[
   return {
     externalId: t.id,
     accountExternalId: t.accountId,
-    amountMinor: t.amountCents,
+    // Canonical Aubrieta sign: positive=inflow, negative=outflow.
+    // Plaid reports positive amounts as money leaving the account.
+    amountMinor: -t.amountCents,
     currency: "USD",
     date: t.date,
     authorizedDate: t.authorizedDate,
@@ -64,6 +66,8 @@ function mapTransaction(t: Awaited<ReturnType<PlaidClient["syncTransactions"]>>[
     merchant: t.merchantName,
     pending: t.pending,
     categoryHint: t.personalFinanceCategory ?? t.categoryPath,
+    categoryPath: t.categoryPath,
+    personalFinanceCategory: t.personalFinanceCategory,
   };
 }
 
@@ -89,12 +93,30 @@ export function createPlaidProvider(client: PlaidClient): FinancialProvider {
 
     async syncTransactions(connectionSecret, cursor): Promise<ProviderTransactionSync> {
       const { creds, accessToken } = asPlaidSecret(connectionSecret);
-      const res = await client.syncTransactions(creds, accessToken, cursor.value);
+      const added: ProviderTransaction[] = [];
+      const modified: ProviderTransaction[] = [];
+      const removedExternalIds: string[] = [];
+      let nextCursor = cursor.value;
+      let hasMore = true;
+      let guard = 0;
+
+      // PlaidClient is intentionally page-oriented for native/test clients.
+      // Consume every page here so the shared sync engine stays provider-agnostic.
+      while (hasMore && guard < 20) {
+        guard++;
+        const res = await client.syncTransactions(creds, accessToken, nextCursor);
+        added.push(...res.added.map(mapTransaction));
+        modified.push(...res.modified.map(mapTransaction));
+        removedExternalIds.push(...res.removed.map((r) => r.transactionId));
+        nextCursor = res.nextCursor;
+        hasMore = res.hasMore;
+      }
+
       return {
-        added: res.added.map(mapTransaction),
-        modified: res.modified.map(mapTransaction),
-        removedExternalIds: res.removed.map((r) => r.transactionId),
-        nextCursor: { value: res.nextCursor },
+        added,
+        modified,
+        removedExternalIds,
+        nextCursor: { value: nextCursor },
       };
     },
 
