@@ -15,9 +15,11 @@ import type { ProviderKind } from "@/server/providers/types";
  * identifies provider transactions through transaction_provider_refs.
  */
 export interface IngestTxn {
-  provider: ProviderKind;
-  connectionId: string;
-  externalId: string;
+  provider?: ProviderKind;
+  connectionId?: string;
+  externalId?: string;
+  /** Legacy Plaid alias retained for direct ingest callers during M1 migration. */
+  plaidId?: string;
   accountRowId: string;
   amountCents: number;
   date: string;
@@ -38,7 +40,7 @@ export function createIngestService(db: Db = getDb()) {
   async function ensureProviderRef(
     userId: string,
     txnId: string,
-    txn: IngestTxn,
+    txn: IngestTxn & { provider: ProviderKind; externalId: string; connectionId: string },
   ): Promise<void> {
     const ts = now();
     const existing = await db.get<{ id: string }>(
@@ -83,19 +85,48 @@ export function createIngestService(db: Db = getDb()) {
      * same canonical row. CSV/phone-import duplicates are adopted instead of
      * duplicated, preserving user categories and notes.
      */
-    async upsert(userId: string, txn: IngestTxn, categoryId: string | null): Promise<void> {
+    async upsert(
+      userIdOrTxn: string | IngestTxn,
+      txnOrCategory: IngestTxn | string | null,
+      maybeCategoryId?: string | null,
+    ): Promise<void> {
+      const legacyCall = typeof userIdOrTxn !== "string";
+      const rawTxn = (legacyCall ? userIdOrTxn : txnOrCategory) as IngestTxn;
+      const categoryId = legacyCall
+        ? (txnOrCategory as string | null)
+        : (maybeCategoryId ?? null);
+      const accountOwner = legacyCall
+        ? await db.get<{ user_id: string }>("SELECT user_id FROM accounts WHERE id = ?", rawTxn.accountRowId)
+        : undefined;
+      const userId = legacyCall ? accountOwner?.user_id : userIdOrTxn;
+      if (!userId) throw new Error("Transaction account owner not found.");
+
+      const provider = rawTxn.provider ?? "plaid";
+      const externalId = rawTxn.externalId ?? rawTxn.plaidId;
+      if (!externalId) throw new Error("Provider transaction id is required.");
+      let connectionId = rawTxn.connectionId;
+      if (!connectionId) {
+        const ref = await db.get<{ connection_id: string }>(
+          "SELECT connection_id FROM account_provider_refs WHERE account_id = ? AND provider = ? LIMIT 1",
+          rawTxn.accountRowId,
+          provider,
+        );
+        connectionId = ref?.connection_id;
+      }
+      const txn = { ...rawTxn, provider, externalId, connectionId };
+
       const providerRef = await db.get<{ transaction_id: string }>(
         "SELECT transaction_id FROM transaction_provider_refs WHERE provider = ? AND external_transaction_id = ?",
-        txn.provider,
-        txn.externalId,
+        provider,
+        externalId,
       );
 
       // Compatibility fallback for pre-024 Plaid rows if a database is caught
       // between schema migration and reference backfill.
-      const legacyPlaid = !providerRef && txn.provider === "plaid"
+      const legacyPlaid = !providerRef && provider === "plaid"
         ? await db.get<{ id: string }>(
             "SELECT id FROM transactions WHERE plaid_transaction_id = ?",
-            txn.externalId,
+            externalId,
           )
         : undefined;
 
@@ -124,7 +155,9 @@ export function createIngestService(db: Db = getDb()) {
           txn.externalId,
           existingId,
         );
-        await ensureProviderRef(userId, existingId, txn);
+        if (txn.connectionId) {
+          await ensureProviderRef(userId, existingId, txn as IngestTxn & { provider: ProviderKind; externalId: string; connectionId: string });
+        }
         return;
       }
 
@@ -152,7 +185,9 @@ export function createIngestService(db: Db = getDb()) {
           txn.provider,
           imported.id,
         );
-        await ensureProviderRef(userId, imported.id, txn);
+        if (txn.connectionId) {
+          await ensureProviderRef(userId, imported.id, txn as IngestTxn & { provider: ProviderKind; externalId: string; connectionId: string });
+        }
         return;
       }
 
@@ -179,7 +214,9 @@ export function createIngestService(db: Db = getDb()) {
         txn.provider,
         now(),
       );
-      await ensureProviderRef(userId, id, txn);
+      if (txn.connectionId) {
+        await ensureProviderRef(userId, id, txn as IngestTxn & { provider: ProviderKind; externalId: string; connectionId: string });
+      }
     },
 
     /**
@@ -187,7 +224,9 @@ export function createIngestService(db: Db = getDb()) {
      * only when no other aggregation provider references it; this is what lets
      * history survive provider changes.
      */
-    async remove(provider: ProviderKind, externalId: string): Promise<void> {
+    async remove(providerOrExternalId: ProviderKind | string, maybeExternalId?: string): Promise<void> {
+      const provider: ProviderKind = maybeExternalId ? providerOrExternalId as ProviderKind : "plaid";
+      const externalId = maybeExternalId ?? providerOrExternalId;
       const ref = await db.get<{ id: string; transaction_id: string }>(
         "SELECT id, transaction_id FROM transaction_provider_refs WHERE provider = ? AND external_transaction_id = ?",
         provider,
