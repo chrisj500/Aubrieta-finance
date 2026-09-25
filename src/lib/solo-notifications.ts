@@ -40,23 +40,26 @@ export async function computeBudgetStatus(db: Db, userId: string): Promise<Budge
 
   let billsDueSoon = 0;
   try {
-    const bills = await createPlanningService(db).listBills(userId);
-    const now = new Date();
-    const day = now.getDate();
-    for (const bill of bills) {
-      if (!bill.active) continue;
-      const dueDay = bill.due_day ?? 1;
-      let due = dueDay;
-      if (due < day) {
-        // next month
-        const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        due = new Date(next.getFullYear(), next.getMonth() + 1, dueDay).getDate();
-      }
-      const daysUntil = due - day;
-      if (daysUntil >= 0 && daysUntil <= 3) billsDueSoon++;
-    }
+    // Bill occurrences are the canonical M2 schedule. Count upcoming/overdue
+    // obligations without exposing any amount or merchant detail.
+    const today = new Date().toISOString().slice(0, 10);
+    const soon = new Date();
+    soon.setUTCDate(soon.getUTCDate() + 3);
+    const until = soon.toISOString().slice(0, 10);
+    const row = await db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c
+         FROM bill_occurrences
+        WHERE user_id = ?
+          AND status IN ('upcoming','overdue')
+          AND due_date <= ?`,
+      userId,
+      until,
+    );
+    billsDueSoon = row?.c ?? 0;
   } catch {
-    /* bills are optional — never fail the whole summary */
+    // Pre-M2 databases can still open briefly during migration/bootstrap.
+    const bills = await createPlanningService(db).listBills(userId).catch(() => []);
+    billsDueSoon = bills.filter((bill) => bill.active).length > 0 ? 0 : 0;
   }
 
   return {
@@ -94,6 +97,8 @@ export interface NotifPrefsInput {
   enabled: boolean;
   frequency: "daily" | "weekly";
   time: string;
+  billRemindersEnabled?: boolean;
+  billReminderDays?: number[];
 }
 
 /**
@@ -121,17 +126,79 @@ export async function syncNotificationSchedule(db: Db, prefs: NotifPrefsInput): 
 
     const summary = await computeBudgetStatus(db, user.id);
     const fire = nextFire(prefs.time, prefs.frequency);
+    const notifications: Array<{
+      id: number;
+      title: string;
+      body: string;
+      schedule: { at: Date };
+    }> = [
+      {
+        id: 1,
+        title: titleFor(summary),
+        body: bodyFor(summary, prefs.frequency),
+        schedule: { at: fire },
+      },
+    ];
 
-    await LocalNotifications.schedule({
-      notifications: [
-        {
-          id: 1,
-          title: titleFor(summary),
-          body: bodyFor(summary, prefs.frequency),
-          schedule: { at: fire },
-        },
-      ],
-    });
+    if (prefs.billRemindersEnabled !== false) {
+      const reminderDays =
+        prefs.billReminderDays && prefs.billReminderDays.length > 0
+          ? prefs.billReminderDays
+          : [7, 3, 1, 0];
+      const occurrences = await db.all<{
+        id: string;
+        due_date: string;
+        status: string;
+      }>(
+        `SELECT id, due_date, status
+           FROM bill_occurrences
+          WHERE user_id = ?
+            AND status IN ('upcoming','overdue')
+          ORDER BY due_date ASC
+          LIMIT 24`,
+        user.id,
+      );
+      const [hour, minute] = prefs.time.split(":").map((n) => parseInt(n, 10) || 0);
+      let notificationId = 100;
+      const nowMs = Date.now();
+
+      for (const occurrence of occurrences) {
+        if (occurrence.status === "overdue") {
+          const at = new Date();
+          at.setHours(hour, minute, 0, 0);
+          if (at.getTime() <= nowMs) at.setDate(at.getDate() + 1);
+          notifications.push({
+            id: notificationId++,
+            title: "Bill overdue",
+            body: "A bill needs your attention — open Aubrieta for details.",
+            schedule: { at },
+          });
+          continue;
+        }
+
+        for (const days of reminderDays) {
+          const at = new Date(`${occurrence.due_date}T00:00:00`);
+          at.setDate(at.getDate() - days);
+          at.setHours(hour, minute, 0, 0);
+          if (at.getTime() <= nowMs) continue;
+          notifications.push({
+            id: notificationId++,
+            title:
+              days === 0
+                ? "Bill due today"
+                : days === 1
+                  ? "Bill due tomorrow"
+                  : "Bill due soon",
+            body: "You have an upcoming bill — open Aubrieta for details.",
+            schedule: { at },
+          });
+          if (notifications.length >= 48) break;
+        }
+        if (notifications.length >= 48) break;
+      }
+    }
+
+    await LocalNotifications.schedule({ notifications });
   } catch {
     /* notifications are best-effort — never crash the app over them */
   }
