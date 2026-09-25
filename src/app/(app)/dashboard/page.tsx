@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingDown, TrendingUp, Wallet, Scale, Settings2, ChevronUp, ChevronDown, EyeOff, Eye, RotateCcw } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, Scale, Settings2, ChevronUp, ChevronDown, EyeOff, Eye, RotateCcw, CalendarClock, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardLabel, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,18 @@ interface Summary {
   monthExpenseCents: number;
   monthNetCents: number;
   budgetOverview: Array<{ id: string; name: string; spentCents: number; amountCents: number; pct: number }>;
+  upcomingBills: Array<{
+    occurrenceId: string;
+    billId: string;
+    name: string;
+    dueDate: string;
+    amountCents: number;
+    status: string;
+    source: string;
+    sourceConfidence: string;
+  }>;
+  overdueBillCount: number;
+  upcomingBillsTotalCents: number;
   recentTransactions: Array<{
     id: string;
     accountName: string;
@@ -152,6 +164,62 @@ function BudgetsCard({ s }: { s: Summary }) {
               </span>
             </div>
             <Progress value={b.pct} label={`${b.name} budget usage`} />
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function UpcomingBillsCard({ s }: { s: Summary }) {
+  const labelFor = (bill: Summary["upcomingBills"][number]) => {
+    if (bill.sourceConfidence === "confirmed") return "Confirmed";
+    if (bill.source === "provider_recurring" || bill.sourceConfidence === "provider") return "Provider";
+    if (bill.sourceConfidence === "user") return "User override";
+    return "Detected";
+  };
+
+  return (
+    <Card className={s.overdueBillCount > 0 ? "border-warning/40" : ""}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-muted text-text-muted" aria-hidden>
+            <CalendarClock size={17} />
+          </span>
+          <div>
+            <CardTitle>Upcoming bills</CardTitle>
+            <p className="text-xs text-text-muted">
+              Next 30 days · <Money cents={s.upcomingBillsTotalCents} /> expected
+            </p>
+          </div>
+        </div>
+        <Link href="/plan" className="text-sm font-medium text-accent-text hover:underline">
+          View calendar
+        </Link>
+      </div>
+
+      {s.overdueBillCount > 0 && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">
+          <AlertTriangle size={15} aria-hidden />
+          {s.overdueBillCount} overdue {s.overdueBillCount === 1 ? "bill" : "bills"}
+        </div>
+      )}
+
+      <div className="mt-3 divide-y divide-border">
+        {s.upcomingBills.length === 0 && (
+          <p className="py-5 text-sm text-text-muted">No bills due in the next 30 days.</p>
+        )}
+        {s.upcomingBills.map((bill) => (
+          <div key={bill.occurrenceId} className="flex items-center justify-between gap-3 py-2.5">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-text">{bill.name}</p>
+              <p className="text-xs text-text-muted">
+                {formatShortDate(bill.dueDate)} · {labelFor(bill)}
+              </p>
+            </div>
+            <span className="money shrink-0 text-sm font-semibold">
+              <Money cents={bill.amountCents} />
+            </span>
           </div>
         ))}
       </div>
@@ -335,6 +403,8 @@ export default function DashboardPage() {
 
       {/* One-tap review of transactions that still need a human-set category */}
       <ReviewWidget />
+
+      <UpcomingBillsCard s={s} />
 
       {customizing && (
         <Card>
