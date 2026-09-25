@@ -37,6 +37,9 @@ const securityHeaders = [
  * installable + offline-capable like a normal PWA.
  */
 const isPages = process.env.PAGES === "1";
+// @serwist/next generates swDest through the webpack compiler. Keep the
+// production server build on webpack (see package.json build script) so
+// public/sw.js is actually emitted and copied into the runtime image.
 const withSerwist = withSerwistInit({
   swSrc: "src/app/sw.ts",
   swDest: "public/sw.js",
