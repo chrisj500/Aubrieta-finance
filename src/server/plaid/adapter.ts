@@ -48,6 +48,20 @@ export interface PlaidSyncResult {
   hasMore: boolean;
 }
 
+export interface PlaidRecurringStream {
+  id: string;
+  accountId: string;
+  direction: "inflow" | "outflow";
+  merchantName: string | null;
+  description: string;
+  cadence: "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly" | "unknown";
+  averageAmountCents: number | null;
+  lastAmountCents: number | null;
+  lastDate: string | null;
+  nextExpectedDate: string | null;
+  active: boolean;
+}
+
 export interface PlaidLiability {
   accountId: string;
   kind: "credit_card" | "mortgage" | "student_loan";
@@ -83,6 +97,7 @@ export interface PlaidClient {
     end: string
   ): Promise<PlaidTransaction[]>;
   getLiabilities?(creds: PlaidCreds, accessToken: string): Promise<PlaidLiability[]>;
+  getRecurringStreams?(creds: PlaidCreds, accessToken: string): Promise<PlaidRecurringStream[]>;
   removeItem(creds: PlaidCreds, accessToken: string): Promise<void>;
   testCredentials(creds: PlaidCreds): Promise<PlaidTestResult>;
 }
