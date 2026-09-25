@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   FinancialProvider,
   NormalizedAccountType,
@@ -494,7 +495,7 @@ export async function exchangeAkoyaCode(input: {
     grant_id?: string;
   };
   if (!body.id_token || !body.refresh_token) throw new Error("Akoya token response was incomplete.");
-  const grantId = body.grant_id ?? decodeJwtClaim(body.id_token, "grant_id") ?? crypto.randomUUID();
+  const grantId = body.grant_id ?? decodeJwtClaim(body.id_token, "grant_id") ?? randomUUID();
   return {
     idToken: body.id_token,
     refreshToken: body.refresh_token,
