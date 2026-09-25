@@ -938,12 +938,18 @@ export function createPlanningService(db: Db = getDb()) {
         };
       };
 
+      const overdueBillIds = new Set(
+        occurrences
+          .filter((occ) => occ.status === "overdue" && occ.due_date < today)
+          .map((occ) => occ.bill_id),
+      );
       const upcomingBills = occurrences
         .filter(
           (occ) =>
             occ.status === "upcoming" &&
             occ.due_date >= today &&
-            occ.due_date <= horizon,
+            occ.due_date <= horizon &&
+            !overdueBillIds.has(occ.bill_id),
         )
         .map(enrich)
         .filter((bill): bill is NonNullable<typeof bill> => Boolean(bill));
