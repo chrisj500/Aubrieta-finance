@@ -3,6 +3,7 @@ import { apiErrors } from "@/lib/api-error";
 import { assertValidCents } from "@/server/domain/money";
 import { getDb, type Db } from "@/server/db/registry";
 import { addDaysISO, addMonthsISO, monthsBetween, todayISO } from "@/server/domain/dates";
+import { createBillIntelligenceService } from "@/server/domain/bill-intelligence";
 
 export type BillFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly" | "one-time";
 
@@ -22,6 +23,8 @@ export interface BillRow {
   provider_liability_id: string | null;
   source: string;
   source_confidence: string;
+  recurring_series_id: string | null;
+  user_overridden: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -261,10 +264,17 @@ export function createPlanningService(db: Db = getDb()) {
      LEFT JOIN liabilities l ON l.id = b.provider_liability_id`;
 
   /** Raw row from SQLite: active comes back as 0/1. */
-  type BillDbRow = Omit<BillWithNames, "active"> & { active: number | boolean };
+  type BillDbRow = Omit<BillWithNames, "active" | "user_overridden"> & {
+    active: number | boolean;
+    user_overridden: number | boolean;
+  };
 
   function toBillRow(row: BillDbRow): BillWithNames {
-    return { ...row, active: row.active === true || row.active === 1 };
+    return {
+      ...row,
+      active: row.active === true || row.active === 1,
+      user_overridden: row.user_overridden === true || row.user_overridden === 1,
+    };
   }
 
   return {
@@ -353,8 +363,9 @@ export function createPlanningService(db: Db = getDb()) {
       const nextDueDate = initialDueDate(frequency, input.dueDay ?? null, input.nextDueDate ?? null);
       await db.run(
         `INSERT INTO bills (id, user_id, name, amount_cents, frequency, due_day, next_due_date,
-                            last_paid_amount_cents, category_id, account_id, active, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            last_paid_amount_cents, category_id, account_id, active, notes,
+                            created_at, updated_at, source, source_confidence, user_overridden)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'user', 0)`,
         id,
         userId,
         name,
@@ -409,9 +420,16 @@ export function createPlanningService(db: Db = getDb()) {
         throw apiErrors.badRequest("One-time bills need a due date.");
       }
 
+      const isDerived =
+        row.source !== "manual" ||
+        row.provider_liability_id !== null ||
+        row.recurring_series_id !== null;
       await db.run(
         `UPDATE bills SET name = ?, amount_cents = ?, frequency = ?, due_day = ?, next_due_date = ?,
-                          category_id = ?, account_id = ?, active = ?, notes = ?, updated_at = ?
+                          category_id = ?, account_id = ?, active = ?, notes = ?,
+                          user_overridden = CASE WHEN ? THEN 1 ELSE user_overridden END,
+                          source_confidence = CASE WHEN ? THEN 'user' ELSE source_confidence END,
+                          updated_at = ?
           WHERE id = ? AND user_id = ?`,
         name,
         amountCents,
@@ -422,6 +440,8 @@ export function createPlanningService(db: Db = getDb()) {
         input.accountId !== undefined ? input.accountId : row.account_id,
         input.active !== undefined ? (input.active ? 1 : 0) : row.active ? 1 : 0,
         input.notes != null ? input.notes.trim().slice(0, 500) || null : row.notes,
+        isDerived ? 1 : 0,
+        isDerived ? 1 : 0,
         now(),
         id,
         userId
@@ -430,6 +450,15 @@ export function createPlanningService(db: Db = getDb()) {
     },
 
     async removeBill(userId: string, id: string): Promise<void> {
+      const bill = await this.getBill(userId, id);
+      if (bill.recurring_series_id) {
+        await db.run(
+          "UPDATE recurring_series SET user_dismissed = 1, active = 0, updated_at = ? WHERE id = ? AND user_id = ?",
+          now(),
+          bill.recurring_series_id,
+          userId,
+        );
+      }
       await db.run("DELETE FROM bills WHERE id = ? AND user_id = ?", id, userId);
     },
 
@@ -445,7 +474,24 @@ export function createPlanningService(db: Db = getDb()) {
       if (!Number.isInteger(paid) || paid <= 0) throw apiErrors.badRequest("Paid amount must be positive cents.");
       assertValidCents(paid, "amountCents");
 
-      const nextDue = advanceDueDate(row.frequency, row.next_due_date ?? todayISO());
+      const dueDate = row.next_due_date ?? todayISO();
+      await createBillIntelligenceService(db).ensureOccurrences(userId);
+      const occurrence = await db.get<{ id: string }>(
+        `SELECT id FROM bill_occurrences
+          WHERE user_id = ? AND bill_id = ? AND due_date = ?`,
+        userId,
+        id,
+        dueDate,
+      );
+      if (occurrence) {
+        await createBillIntelligenceService(db).markOccurrencePaid(
+          userId,
+          occurrence.id,
+          paid,
+        );
+      }
+
+      const nextDue = advanceDueDate(row.frequency, dueDate);
       await db.run(
         `UPDATE bills SET last_paid_amount_cents = ?, next_due_date = ?, active = ?, updated_at = ?
           WHERE id = ? AND user_id = ?`,
@@ -456,6 +502,7 @@ export function createPlanningService(db: Db = getDb()) {
         id,
         userId
       );
+      await createBillIntelligenceService(db).ensureOccurrences(userId);
       return this.getBill(userId, id);
     },
 
@@ -847,26 +894,83 @@ export function createPlanningService(db: Db = getDb()) {
     async digest(userId: string, days = 30, until?: string): Promise<{
       days: number;
       until: string | null;
-      upcomingBills: BillWithNames[];
-      overdueBills: BillWithNames[];
+      upcomingBills: Array<BillWithNames & {
+        occurrence_id: string;
+        occurrence_status: string;
+        occurrence_actual_amount_cents: number | null;
+        occurrence_paid_evidence: string | null;
+      }>;
+      overdueBills: Array<BillWithNames & {
+        occurrence_id: string;
+        occurrence_status: string;
+        occurrence_actual_amount_cents: number | null;
+        occurrence_paid_evidence: string | null;
+      }>;
       totalUpcomingCents: number;
     }> {
       const today = todayISO();
-      const horizon = until && /^\d{4}-\d{2}-\d{2}$/.test(until) ? until : addDaysISO(today, days);
-      const billRows = await db.all<BillDbRow>(
-        `${BILL_SELECT} WHERE b.user_id = ? AND b.active = 1 AND b.next_due_date IS NOT NULL`,
-        userId
+      const horizon =
+        until && /^\d{4}-\d{2}-\d{2}$/.test(until)
+          ? until
+          : addDaysISO(today, days);
+      const intelligence = createBillIntelligenceService(db);
+      await intelligence.ensureOccurrences(userId);
+      await intelligence.matchPayments(userId);
+      const occurrences = await intelligence.listOccurrences(
+        userId,
+        addDaysISO(today, -365),
+        horizon,
       );
-      const bills = billRows.map(toBillRow);
-      const upcoming = bills
-        .filter((b) => b.next_due_date! >= today && b.next_due_date! <= horizon)
-        .sort((a, b) => a.next_due_date!.localeCompare(b.next_due_date!));
-      const overdue = bills
-        .filter((b) => b.next_due_date! < today)
-        .sort((a, b) => a.next_due_date!.localeCompare(b.next_due_date!));
-      const totalUpcomingCents = upcoming.reduce((s, b) => s + b.amount_cents, 0);
-      return { days, until: horizon, upcomingBills: upcoming, overdueBills: overdue, totalUpcomingCents };
-    },
+      const bills = await this.listBills(userId);
+      const byId = new Map(bills.map((bill) => [bill.id, bill]));
+
+      const enrich = (occ: typeof occurrences[number]) => {
+        const bill = byId.get(occ.bill_id);
+        if (!bill) return null;
+        return {
+          ...bill,
+          next_due_date: occ.due_date,
+          amount_cents: occ.expected_amount_cents,
+          occurrence_id: occ.id,
+          occurrence_status: occ.status,
+          occurrence_actual_amount_cents: occ.actual_amount_cents,
+          occurrence_paid_evidence: occ.paid_evidence,
+        };
+      };
+
+      const overdueBillIds = new Set(
+        occurrences
+          .filter((occ) => occ.status === "overdue" && occ.due_date < today)
+          .map((occ) => occ.bill_id),
+      );
+      const upcomingBills = occurrences
+        .filter(
+          (occ) =>
+            occ.status === "upcoming" &&
+            occ.due_date >= today &&
+            occ.due_date <= horizon &&
+            !overdueBillIds.has(occ.bill_id),
+        )
+        .map(enrich)
+        .filter((bill): bill is NonNullable<typeof bill> => Boolean(bill));
+
+      const overdueBills = occurrences
+        .filter((occ) => occ.status === "overdue" && occ.due_date < today)
+        .map(enrich)
+        .filter((bill): bill is NonNullable<typeof bill> => Boolean(bill));
+
+      const totalUpcomingCents = upcomingBills.reduce(
+        (sum, bill) => sum + bill.amount_cents,
+        0,
+      );
+      return {
+        days,
+        until: horizon,
+        upcomingBills,
+        overdueBills,
+        totalUpcomingCents,
+      };
+    }
   };
 }
 

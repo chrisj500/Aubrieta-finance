@@ -2,6 +2,8 @@ import { getDb, type Db } from "@/server/db/registry";
 import { createBudgetsService, frameBounds, monthBounds, type BudgetFrame } from "@/server/domain/budgets";
 import { withAllowlist, type AllowlistCtx } from "@/server/db/allowlist";
 import { markLinkedTransfers } from "@/server/domain/transfers";
+import { createBillIntelligenceService } from "@/server/domain/bill-intelligence";
+import { addDaysISO, todayISO } from "@/server/domain/dates";
 
 /** Dashboard one-call briefing. */
 export interface Summary {
@@ -11,6 +13,18 @@ export interface Summary {
   monthExpenseCents: number;
   monthNetCents: number;
   budgetOverview: Array<{ id: string; name: string; spentCents: number; amountCents: number; pct: number }>;
+  upcomingBills: Array<{
+    occurrenceId: string;
+    billId: string;
+    name: string;
+    dueDate: string;
+    amountCents: number;
+    status: string;
+    source: string;
+    sourceConfidence: string;
+  }>;
+  overdueBillCount: number;
+  upcomingBillsTotalCents: number;
   recentTransactions: Array<{
     id: string;
     accountName: string;
@@ -102,6 +116,34 @@ export function createSummaryService(db: Db = getDb()) {
         pct: b.pct,
       }));
 
+      const billIntelligence = createBillIntelligenceService(db);
+      await billIntelligence.ensureOccurrences(userId);
+      await billIntelligence.matchPayments(userId);
+      const billOccurrences = await billIntelligence.listOccurrences(
+        userId,
+        addDaysISO(todayISO(), -365),
+        addDaysISO(todayISO(), 30),
+      );
+      const upcomingBills = billOccurrences
+        .filter((o) => o.status === "upcoming" && o.due_date >= todayISO())
+        .slice(0, 5)
+        .map((o) => ({
+          occurrenceId: o.id,
+          billId: o.bill_id,
+          name: o.bill_name ?? "Bill",
+          dueDate: o.due_date,
+          amountCents: o.expected_amount_cents,
+          status: o.status,
+          source: o.source,
+          sourceConfidence: o.source_confidence,
+        }));
+      const overdueBillCount = billOccurrences.filter(
+        (o) => o.status === "overdue",
+      ).length;
+      const upcomingBillsTotalCents = billOccurrences
+        .filter((o) => o.status === "upcoming" && o.due_date >= todayISO())
+        .reduce((sum, o) => sum + o.expected_amount_cents, 0);
+
       const recent = await db.all<Summary["recentTransactions"][number]>(
         `SELECT t.id, a.name AS accountName, t.amount_cents AS amountCents, t.date,
                 t.name, c.name AS categoryName, c.color AS categoryColor
@@ -122,6 +164,9 @@ export function createSummaryService(db: Db = getDb()) {
         monthExpenseCents,
         monthNetCents: monthIncomeCents - monthExpenseCents,
         budgetOverview,
+        upcomingBills,
+        overdueBillCount,
+        upcomingBillsTotalCents,
         recentTransactions: recent,
         reviewDebug: await (async () => {
           const raw = await db.get<{ c: number }>(

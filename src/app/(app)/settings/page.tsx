@@ -727,6 +727,8 @@ function NotificationsSecurityCard({ setMsg, setErr }: { setMsg: (s: string | nu
         emailAddress: string | null;
         emailFrequency: "daily" | "weekly";
         biometricEnabled: boolean;
+        billRemindersEnabled: boolean;
+        billReminderDays: number[];
       }>("/api/notifications/prefs"),
   });
   const lock = useQuery({
@@ -761,11 +763,15 @@ function NotificationsSecurityCard({ setMsg, setErr }: { setMsg: (s: string | nu
           notifEnabled: boolean;
           notifFrequency: "daily" | "weekly";
           notifTime: string;
+          billRemindersEnabled: boolean;
+          billReminderDays: number[];
         };
         await syncNotificationSchedule(db, {
           enabled: next.notifEnabled,
           frequency: next.notifFrequency,
           time: next.notifTime,
+          billRemindersEnabled: next.billRemindersEnabled,
+          billReminderDays: next.billReminderDays,
         });
       }
     } catch (e) {
@@ -859,6 +865,61 @@ function NotificationsSecurityCard({ setMsg, setErr }: { setMsg: (s: string | nu
               Time
               <CustomTimePicker ariaLabel="Notification time" className="w-36" value={p.notifTime} onChange={(v) => save({ notifTime: v })} />
             </label>
+          </div>
+        )}
+      </div>
+
+      {/* Bill reminders */}
+      <h4 className="mt-6 text-sm font-semibold text-text">Bill reminders</h4>
+      <p className="mt-1 text-xs text-text-muted">
+        Remind you before upcoming obligations and when something becomes overdue. Reminder events are deduplicated, so a sync cannot create duplicate alerts.
+      </p>
+      <div className="mt-3 space-y-3">
+        <label className="flex items-center gap-2 text-sm text-text">
+          <input
+            type="checkbox"
+            checked={p?.billRemindersEnabled ?? true}
+            onChange={(e) => save({ billRemindersEnabled: e.target.checked })}
+            disabled={!p}
+          />
+          Enable bill reminders
+        </label>
+        {p?.billRemindersEnabled && (
+          <div>
+            <p className="mb-2 text-xs text-text-muted">Remind me:</p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { days: 7, label: "7 days before" },
+                { days: 3, label: "3 days before" },
+                { days: 1, label: "Tomorrow" },
+                { days: 0, label: "Due today" },
+              ].map((option) => {
+                const selected = p.billReminderDays.includes(option.days);
+                return (
+                  <button
+                    key={option.days}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => {
+                      const next = selected
+                        ? p.billReminderDays.filter((d) => d !== option.days)
+                        : [...p.billReminderDays, option.days];
+                      save({ billReminderDays: next.length > 0 ? next : [0] });
+                    }}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      selected
+                        ? "border-accent bg-accent/10 text-accent-text"
+                        : "border-border text-text-muted hover:text-text"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-text-muted">
+              Overdue reminders are always queued while bill reminders are enabled.
+            </p>
           </div>
         )}
       </div>

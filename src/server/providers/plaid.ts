@@ -4,6 +4,7 @@ import type {
   NormalizedAccountType,
   ProviderAccount,
   ProviderLiability,
+  ProviderRecurringStream,
   ProviderTransaction,
   ProviderTransactionSync,
 } from "./types";
@@ -81,6 +82,7 @@ export function createPlaidProvider(client: PlaidClient): FinancialProvider {
         "balances",
         "transactions",
         "liabilities",
+        "recurring",
         "refresh",
         "reauth",
       ]),
@@ -135,6 +137,24 @@ export function createPlaidProvider(client: PlaidClient): FinancialProvider {
         lastPaymentAmountMinor: l.lastPaymentAmountCents,
         lastPaymentDate: l.lastPaymentDate,
         rawStatus: l.rawStatus,
+      }));
+    },
+
+    async getRecurringStreams(connectionSecret): Promise<ProviderRecurringStream[]> {
+      const { creds, accessToken } = asPlaidSecret(connectionSecret);
+      if (!client.getRecurringStreams) return [];
+      return (await client.getRecurringStreams(creds, accessToken)).map((stream) => ({
+        externalId: stream.id,
+        accountExternalId: stream.accountId,
+        direction: stream.direction,
+        merchant: stream.merchantName,
+        description: stream.description,
+        cadence: stream.cadence,
+        averageAmountMinor: stream.averageAmountCents,
+        lastAmountMinor: stream.lastAmountCents,
+        lastDate: stream.lastDate,
+        nextExpectedDate: stream.nextExpectedDate,
+        active: stream.active,
       }));
     },
 

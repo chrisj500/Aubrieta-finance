@@ -26,6 +26,8 @@ export interface NotificationPrefs {
   emailAddress: string | null;
   emailFrequency: Frequency;
   biometricEnabled: boolean;
+  billRemindersEnabled: boolean;
+  billReminderDays: number[];
 }
 
 const DEFAULTS: NotificationPrefs = {
@@ -36,6 +38,8 @@ const DEFAULTS: NotificationPrefs = {
   emailAddress: null,
   emailFrequency: "weekly",
   biometricEnabled: false,
+  billRemindersEnabled: true,
+  billReminderDays: [7, 3, 1, 0],
 };
 
 function normFrequency(v: unknown): Frequency {
@@ -53,9 +57,12 @@ export function createNotificationsService(db: Db = getDb()) {
         email_address: string | null;
         email_frequency: string;
         biometric_enabled: number;
+        bill_reminders_enabled: number;
+        bill_reminder_days: string;
       }>(
         `SELECT notif_enabled, notif_frequency, notif_time,
-                email_enabled, email_address, email_frequency, biometric_enabled
+                email_enabled, email_address, email_frequency, biometric_enabled,
+                bill_reminders_enabled, bill_reminder_days
          FROM user_settings WHERE user_id = ?`,
         userId
       );
@@ -68,6 +75,21 @@ export function createNotificationsService(db: Db = getDb()) {
         emailAddress: row.email_address ?? null,
         emailFrequency: normFrequency(row.email_frequency),
         biometricEnabled: row.biometric_enabled === 1,
+        billRemindersEnabled: row.bill_reminders_enabled !== 0,
+        billReminderDays: (() => {
+          try {
+            const parsed = JSON.parse(row.bill_reminder_days);
+            if (!Array.isArray(parsed)) return [...DEFAULTS.billReminderDays];
+            const days = parsed
+              .filter((n) => Number.isInteger(n) && n >= 0 && n <= 30)
+              .filter((n, i, arr) => arr.indexOf(n) === i)
+              .sort((a, b) => b - a)
+              .slice(0, 8);
+            return days.length > 0 ? days : [...DEFAULTS.billReminderDays];
+          } catch {
+            return [...DEFAULTS.billReminderDays];
+          }
+        })(),
       };
     },
 
@@ -85,13 +107,27 @@ export function createNotificationsService(db: Db = getDb()) {
         emailAddress: patch.emailAddress !== undefined ? (patch.emailAddress || null) : current.emailAddress,
         emailFrequency: patch.emailFrequency ? normFrequency(patch.emailFrequency) : current.emailFrequency,
         biometricEnabled: patch.biometricEnabled ?? current.biometricEnabled,
+        billRemindersEnabled:
+          patch.billRemindersEnabled ?? current.billRemindersEnabled,
+        billReminderDays:
+          patch.billReminderDays !== undefined
+            ? patch.billReminderDays
+                .filter((n) => Number.isInteger(n) && n >= 0 && n <= 30)
+                .filter((n, i, arr) => arr.indexOf(n) === i)
+                .sort((a, b) => b - a)
+                .slice(0, 8)
+            : current.billReminderDays,
       };
+      if (next.billReminderDays.length === 0) {
+        next.billReminderDays = [...DEFAULTS.billReminderDays];
+      }
       const now = new Date().toISOString();
       await db.run(
         `INSERT INTO user_settings (
            user_id, notif_enabled, notif_frequency, notif_time,
-           email_enabled, email_address, email_frequency, biometric_enabled, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           email_enabled, email_address, email_frequency, biometric_enabled,
+           bill_reminders_enabled, bill_reminder_days, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            notif_enabled = excluded.notif_enabled,
            notif_frequency = excluded.notif_frequency,
@@ -100,6 +136,8 @@ export function createNotificationsService(db: Db = getDb()) {
            email_address = excluded.email_address,
            email_frequency = excluded.email_frequency,
            biometric_enabled = excluded.biometric_enabled,
+           bill_reminders_enabled = excluded.bill_reminders_enabled,
+           bill_reminder_days = excluded.bill_reminder_days,
            updated_at = excluded.updated_at`,
         userId,
         next.notifEnabled ? 1 : 0,
@@ -109,6 +147,8 @@ export function createNotificationsService(db: Db = getDb()) {
         next.emailAddress,
         next.emailFrequency,
         next.biometricEnabled ? 1 : 0,
+        next.billRemindersEnabled ? 1 : 0,
+        JSON.stringify(next.billReminderDays),
         now
       );
       return next;

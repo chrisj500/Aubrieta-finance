@@ -9,8 +9,8 @@ describe("plan page fetch error handling", () => {
   const src = read("src/app/(app)/plan/page.tsx");
 
   it("collects failed queries gated on no-data so rendered plan data are never blanked", () => {
-    // the digest / bills / debts / goals / projection queries are covered by the failure sweep
-    expect(src).toContain("[digest, bills, debts, goals, projection].filter(");
+    // digest / bills / occurrences / debts / goals / projection are covered by the failure sweep
+    expect(src).toContain("[digest, bills, occurrences, debts, goals, projection].filter(");
     // gated on isError && !data (background refetch errors don't blank the page)
     expect(src).toContain("q.isError && !q.data");
   });

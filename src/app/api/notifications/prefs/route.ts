@@ -15,6 +15,11 @@ const updateSchema = z.object({
   emailAddress: z.string().email().optional().nullable(),
   emailFrequency: z.enum(["daily", "weekly"]).optional(),
   biometricEnabled: z.boolean().optional(),
+  billRemindersEnabled: z.boolean().optional(),
+  billReminderDays: z
+    .array(z.number().int().min(0).max(30))
+    .max(8)
+    .optional(),
 });
 
 export async function GET(req: NextRequest) {

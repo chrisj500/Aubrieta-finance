@@ -147,13 +147,13 @@ export async function syncProviderLiabilities(
       const amount = billAmount(liability);
       const dueDate = liability.nextPaymentDueDate ?? null;
       const dueDay = dueDate ? Number(dueDate.slice(8, 10)) : null;
-      const existingBill = await db.get<{ id: string }>(
-        "SELECT id FROM bills WHERE provider_liability_id = ?",
+      const existingBill = await db.get<{ id: string; user_overridden: number }>(
+        "SELECT id, user_overridden FROM bills WHERE provider_liability_id = ?",
         id,
       );
 
       if (!amount || !dueDate) {
-        if (existingBill) {
+        if (existingBill && !existingBill.user_overridden) {
           await db.run("UPDATE bills SET active = 0, updated_at = ? WHERE id = ?", ts, existingBill.id);
         }
         continue;
@@ -167,22 +167,33 @@ export async function syncProviderLiabilities(
             : `${account.name} loan payment`;
 
       if (existingBill) {
-        await db.run(
-          `UPDATE bills SET
-             name = ?, amount_cents = ?, frequency = 'monthly',
-             due_day = ?, next_due_date = ?, account_id = ?, active = 1,
-             notes = ?, source = 'provider', source_confidence = 'confirmed',
-             updated_at = ?
-           WHERE id = ?`,
-          name,
-          amount,
-          dueDay,
-          dueDate,
-          account.account_id,
-          billNotes(liability),
-          ts,
-          existingBill.id,
-        );
+        if (!existingBill.user_overridden) {
+          await db.run(
+            `UPDATE bills SET
+               name = ?, amount_cents = ?, frequency = 'monthly',
+               due_day = ?, next_due_date = ?, account_id = ?, active = 1,
+               notes = ?, source = 'provider', source_confidence = 'confirmed',
+               updated_at = ?
+             WHERE id = ?`,
+            name,
+            amount,
+            dueDay,
+            dueDate,
+            account.account_id,
+            billNotes(liability),
+            ts,
+            existingBill.id,
+          );
+        } else {
+          // A user override outranks provider projection, but the liability
+          // record itself still refreshes so statement/minimum metadata remains
+          // visible beside the overridden schedule.
+          await db.run(
+            "UPDATE bills SET active = 1, updated_at = ? WHERE id = ?",
+            ts,
+            existingBill.id,
+          );
+        }
       } else {
         await db.run(
           `INSERT INTO bills (
@@ -215,7 +226,11 @@ export async function syncProviderLiabilities(
     for (const row of activeRows) {
       if (!seen.includes(row.provider_external_account_id)) {
         await db.run("UPDATE liabilities SET active = 0, updated_at = ? WHERE id = ?", ts, row.id);
-        await db.run("UPDATE bills SET active = 0, updated_at = ? WHERE provider_liability_id = ?", ts, row.id);
+        await db.run(
+          "UPDATE bills SET active = CASE WHEN user_overridden = 1 THEN active ELSE 0 END, updated_at = ? WHERE provider_liability_id = ?",
+          ts,
+          row.id,
+        );
       }
     }
   });
