@@ -776,10 +776,14 @@ export function createBillIntelligenceService(db: Db) {
       prefs?.notif_time && /^\d{2}:\d{2}$/.test(prefs.notif_time)
         ? prefs.notif_time
         : "09:00";
+    const reminderHorizon = addDaysISO(todayISO(), 30);
     const occurrences = await db.all<{ id: string; due_date: string; status: string }>(
       `SELECT id, due_date, status FROM bill_occurrences
-        WHERE user_id = ? AND status IN ('upcoming','overdue')`,
+        WHERE user_id = ?
+          AND status IN ('upcoming','overdue')
+          AND (status = 'overdue' OR due_date <= ?)`,
       userId,
+      reminderHorizon,
     );
     let inserted = 0;
     const ts = now();
