@@ -3,6 +3,7 @@ import type { Db } from "@/server/db/types";
 import { createCategoriesService } from "@/server/domain/categories";
 import { createIngestService } from "@/server/domain/ingest";
 import { syncProviderLiabilities } from "@/server/domain/liabilities";
+import { createBillIntelligenceService } from "@/server/domain/bill-intelligence";
 import { markLinkedTransfers } from "@/server/domain/transfers";
 import { ensureAccountProviderRef } from "./connections";
 import type {
@@ -255,6 +256,21 @@ export async function syncProviderConnection(
     } catch {
       // Keep last known liability snapshot if a provider temporarily cannot
       // refresh this optional capability.
+    }
+  }
+
+  if (input.provider.getRecurringStreams) {
+    try {
+      const streams = await input.provider.getRecurringStreams(input.connectionSecret);
+      await createBillIntelligenceService(db).syncProviderStreams(
+        input.userId,
+        input.connectionId,
+        providerKind,
+        streams,
+      );
+    } catch {
+      // Provider recurring insights are additive. Local detection remains the
+      // fallback when the add-on is unavailable or temporarily fails.
     }
   }
 
