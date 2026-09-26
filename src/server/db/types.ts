@@ -2,6 +2,10 @@
  * Shared Db interface + row types. Kept free of any better-sqlite3 import so
  * browser/webview bundles (phone-solo, P8b) can import the interface without
  * pulling in the native module. The server implementation lives in adapter.ts.
+ *
+ * Shared application SQL is intentionally kept within the SQLite/PostgreSQL
+ * common subset; see docs/DATABASE_PORTABILITY.md. The current `?` placeholder
+ * syntax is an application convention that a future PgDb adapter may translate.
  */
 export interface DbRow {
   [key: string]: unknown;

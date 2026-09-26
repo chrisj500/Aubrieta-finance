@@ -220,20 +220,28 @@ export function _resetTouchedForTest(): void {
 const PURGE_INTERVAL_MS = 3600_000; // at most one sweep per hour per process
 let lastPurgeMs = 0;
 
-/** SQL predicate matching getSessionFromToken's validity rules (expired OR idle-timed-out). */
-const DEAD_SESSION_WHERE = `(expires_at IS NOT NULL AND expires_at <= ?)
-     OR (idle_timeout_h IS NOT NULL AND datetime(last_seen_at, '+' || idle_timeout_h || ' hours') <= datetime(?))`;
-
 /**
- * Delete sessions that are expired or idle-timed-out. Rows are otherwise
- * only removed by explicit revoke / user deletion, so without this sweep the
- * table (and the Settings device list) accumulates dead rows forever.
- * Returns the number of rows deleted.
+ * Delete sessions that are expired or idle-timed-out. Keep the query in the
+ * SQLite/PostgreSQL common subset: absolute expirations are ISO strings and
+ * compare lexically; per-row idle arithmetic is evaluated in application code.
  */
 export async function purgeExpiredSessions(db: Db = getDb(), nowMs: number = Date.now()): Promise<number> {
   const nowIso = new Date(nowMs).toISOString();
-  const res = await db.run(`DELETE FROM sessions WHERE ${DEAD_SESSION_WHERE}`, nowIso, nowIso);
-  return res.changes;
+  let removed = (await db.run(
+    "DELETE FROM sessions WHERE expires_at IS NOT NULL AND expires_at <= ?",
+    nowIso,
+  )).changes;
+
+  const idle = await db.all<{ id: string; last_seen_at: string; idle_timeout_h: number }>(
+    "SELECT id, last_seen_at, idle_timeout_h FROM sessions WHERE idle_timeout_h IS NOT NULL",
+  );
+  for (const row of idle) {
+    const idleDeadline = new Date(row.last_seen_at).getTime() + row.idle_timeout_h * 3600_000;
+    if (idleDeadline <= nowMs) {
+      removed += (await db.run("DELETE FROM sessions WHERE id = ?", row.id)).changes;
+    }
+  }
+  return removed;
 }
 
 /** Throttled purge hook — call on session-authenticated requests; never throws. */

@@ -171,7 +171,7 @@ export function createPhoneImportService(db: Db) {
       for (const row of budgetCategories) {
         const budgetId = budgetMap.get(text(row, "budget_id") ?? "");
         const categoryId = categoryMap.get(text(row, "category_id") ?? "");
-        if (budgetId && categoryId) await db.run("INSERT OR IGNORE INTO budget_categories (budget_id, category_id) VALUES (?, ?)", budgetId, categoryId);
+        if (budgetId && categoryId) await db.run("INSERT INTO budget_categories (budget_id, category_id) VALUES (?, ?) ON CONFLICT(budget_id, category_id) DO NOTHING", budgetId, categoryId);
       }
 
       for (const table of ["bills", "debts", "goals"] as const) {

@@ -103,7 +103,7 @@ export function createAuthService(db: Db = getDb()) {
         }
         if ((realUsers?.n ?? 0) === 0) {
           await db.run(
-            "INSERT OR IGNORE INTO instance_admins (user_id, created_at, created_by_user_id) VALUES (?, ?, ?)",
+            "INSERT INTO instance_admins (user_id, created_at, created_by_user_id) VALUES (?, ?, ?) ON CONFLICT(user_id) DO NOTHING",
             id, ts, id,
           );
         }

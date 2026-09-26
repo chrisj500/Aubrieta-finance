@@ -134,6 +134,14 @@ Open Finance is a source foundation, not a permanent architectural constraint.
 Upstream changes are reviewed and selectively incorporated. We do not automatically merge upstream main into Aubrieta.
 
 The canonical upstream provenance is documented in UPSTREAM.md.
+## Database portability
+
+SQLite is the supported server database today. Shared application SQL is kept
+within a SQLite/PostgreSQL common subset, with engine-specific operations isolated
+to database adapters and SQLite backup/mobile storage code. See
+`docs/DATABASE_PORTABILITY.md` for the enforced boundary and the work intentionally
+deferred until PostgreSQL is actually required.
+
 ## Multi-household tenancy
 
 Aubrieta may host multiple independent households in one SQLite instance. A user
