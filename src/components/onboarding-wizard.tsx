@@ -302,7 +302,7 @@ export function OnboardingWizard() {
       }}
     >
       <div className="w-full max-w-md">
-        <div className="mb-4 text-center text-xs font-medium text-text">Set up Open Finance</div>
+        <div className="mb-4 text-center text-xs font-medium text-text">Set up Aubrieta</div>
         <StepProgress step={step} />
 
         <div className="rounded-2xl border border-border bg-surface p-6 shadow-[var(--shadow-card)]">
@@ -313,7 +313,7 @@ export function OnboardingWizard() {
               </div>
               <h1 className="text-2xl font-bold text-text">Welcome</h1>
               <p className="mt-2 text-sm text-text-muted">
-                Open Finance runs entirely on your {solo ? "phone" : "machine"} — your data stays yours. In the
+                Aubrieta runs entirely on your {solo ? "phone" : "machine"} — your data stays yours. In the
                 next couple of minutes you&apos;ll set up:
               </p>
               <ul className="mt-4 space-y-2 text-sm text-text">
@@ -517,7 +517,7 @@ export function OnboardingWizard() {
             <>
               <h1 className="text-2xl font-bold text-text">Connect your bank (optional)</h1>
               <p className="mt-2 text-sm text-text-muted">
-                Open Finance uses a secure service called Plaid to connect to your bank. It&apos;s free for personal use, and{" "}
+                Aubrieta uses a secure service called Plaid to connect to your bank. It&apos;s free for personal use, and{" "}
                 <strong className="text-text">your connection keys stay on this {solo ? "phone" : "machine"}</strong> — we
                 never see them.
               </p>
@@ -624,7 +624,7 @@ export function OnboardingWizard() {
               <p className="mt-2 text-sm text-text-muted">
                 {solo ? (
                   <>
-                    This phone can hold your banks and finances by itself. Your AI agent is a separate connection: it runs through an Open Finance hub, so you must install Open Finance on the computer you want the agent to use. You can pair this phone to that hub over Tailscale later — no second hub account is needed.
+                    This phone can hold your banks and finances by itself. Your AI agent is a separate connection: it runs through an Aubrieta hub, so you must install Aubrieta on the computer you want the agent to use. You can pair this phone to that hub over Tailscale later — no second hub account is needed.
                   </>
                 ) : (
                   <>
@@ -719,7 +719,7 @@ export function OnboardingWizard() {
                 <div className="mt-4 space-y-3 rounded-xl border border-border p-4">
                   <p className="text-sm font-medium text-text">Connect this phone to your agent hub</p>
                   <p className="text-xs text-text-muted">
-                    This is optional. Install Open Finance on the computer that will host your agent, start its Hub mode,
+                    This is optional. Install Aubrieta on the computer that will host your agent, start its Hub mode,
                     and install Tailscale on both devices. Then pair this phone with the hub below. Pairing uses the hub&apos;s
                     existing account; it does not create a second account or merge phone data automatically.
                   </p>
@@ -909,7 +909,7 @@ export function OnboardingWizard() {
               </p>
               {err && <p role="alert" className="mt-3 text-sm text-danger">{err}</p>}
               <Button onClick={finish} disabled={busy} className="mt-6 w-full">
-                {busy ? "Entering…" : "Enter Open Finance"}
+                {busy ? "Entering…" : "Enter Aubrieta"}
               </Button>
             </>
           )}
