@@ -130,6 +130,7 @@ export function AkoyaSettingsCard({
     onSuccess: () => {
       setMsg("Akoya connection removed and its refresh token revoked where possible.");
       qc.invalidateQueries({ queryKey: ["akoya-connections"] });
+      qc.invalidateQueries({ queryKey: ["connection-health"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["summary"] });
@@ -139,7 +140,7 @@ export function AkoyaSettingsCard({
   });
 
   return (
-    <Card className="lg:col-span-2">
+    <Card className="lg:col-span-2" id="provider-akoya">
       <CardTitle>Akoya / FDX connections</CardTitle>
       <p className="mt-1 text-sm text-text-muted">
         Connect through Akoya&apos;s consumer-permissioned FDX APIs. Aubrieta stores the client secret,

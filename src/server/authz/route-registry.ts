@@ -68,6 +68,7 @@ export const USER_ONLY_ROUTES: string[] = [
   "/api/auth/*",
   "/api/admin/*",
   "/api/health",
+  "/api/connections/*",
   "/api/hub/*",
   "/api/household/*",
   "/api/pairing/*",

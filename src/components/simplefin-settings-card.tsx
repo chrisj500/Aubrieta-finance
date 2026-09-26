@@ -59,6 +59,7 @@ export function SimpleFinSettingsCard({
 
   function refreshFinance() {
     qc.invalidateQueries({ queryKey: ["simplefin-connections"] });
+      qc.invalidateQueries({ queryKey: ["connection-health"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["summary"] });
@@ -105,6 +106,7 @@ export function SimpleFinSettingsCard({
     onSuccess: () => {
       setMsg("Saved SimpleFIN claim discarded.");
       qc.invalidateQueries({ queryKey: ["simplefin-connections"] });
+      qc.invalidateQueries({ queryKey: ["connection-health"] });
     },
     onError: (e) =>
       setErr(
@@ -127,7 +129,7 @@ export function SimpleFinSettingsCard({
   });
 
   return (
-    <Card className="lg:col-span-2">
+    <Card className="lg:col-span-2" id="provider-simplefin">
       <CardTitle>SimpleFIN connections</CardTitle>
       <p className="mt-1 text-sm text-text-muted">
         SimpleFIN is a low-cost, provider-neutral fallback for balances and

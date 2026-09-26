@@ -26,6 +26,7 @@ import { PlaidLinkLauncher } from "@/components/plaid-link-launcher";
 import { TellerSettingsCard } from "@/components/teller-settings-card";
 import { SimpleFinSettingsCard } from "@/components/simplefin-settings-card";
 import { AkoyaSettingsCard } from "@/components/akoya-settings-card";
+import { ConnectionHealthCard } from "@/components/connection-health-card";
 import { HouseholdSettingsCard } from "@/components/household-settings-card";
 import { InstanceAdminCard } from "@/components/instance-admin-card";
 
@@ -167,6 +168,7 @@ export default function SettingsPage() {
     onSuccess: () => {
       setConfirmRemoveItem(null);
       qc.invalidateQueries({ queryKey: ["plaid-items"] });
+      qc.invalidateQueries({ queryKey: ["connection-health"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
     },
     onError: (e) => setErr(e instanceof Error ? e.message : "Failed to remove connection."),
@@ -190,6 +192,7 @@ export default function SettingsPage() {
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["summary"] });
       qc.invalidateQueries({ queryKey: ["plaid-items"] });
+      qc.invalidateQueries({ queryKey: ["connection-health"] });
     },
     onError: (e) => setErr(e instanceof Error ? e.message : "Sync failed."),
   });
@@ -219,6 +222,7 @@ export default function SettingsPage() {
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["summary"] });
       qc.invalidateQueries({ queryKey: ["plaid-items"] });
+      qc.invalidateQueries({ queryKey: ["connection-health"] });
     },
     onError: (e) => setErr(e instanceof Error ? e.message : "Re-import failed."),
   });
@@ -324,9 +328,11 @@ export default function SettingsPage() {
       </SettingsGroup>
 
       <SettingsGroup title="Data & sync" description="Pay schedule, device pairing, and phone-data import.">
-        {/* Bank connections card continues below */}
+        <ConnectionHealthCard setMsg={setMsg} setErr={setErr} />
 
-      <Card className="lg:col-span-2">
+        {/* Provider-specific connection setup and recovery controls continue below. */}
+
+      <Card className="lg:col-span-2" id="provider-plaid">
         <CardTitle>Bank connections</CardTitle>
         <p className="mt-1 text-sm text-text-muted">
           Aubrieta connects to your bank through Plaid. Paste your free connection keys — they&apos;re encrypted on
@@ -451,6 +457,7 @@ export default function SettingsPage() {
                 setReconnectItemId(null);
                 setLinking(false);
                 qc.invalidateQueries({ queryKey: ["plaid-items"] });
+                qc.invalidateQueries({ queryKey: ["connection-health"] });
                 qc.invalidateQueries({ queryKey: ["accounts"] });
                 qc.invalidateQueries({ queryKey: ["summary"] });
                 qc.invalidateQueries({ queryKey: ["transactions"] });

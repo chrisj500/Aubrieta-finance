@@ -781,6 +781,49 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
       return ok({ results });
     }
 
+    if (method === "GET" && path === "/api/connections/health") {
+      const { getSoloPlaidItems } = await import("@/lib/solo-plaid-store");
+      const userId = await h.deviceUserId();
+      const items = getSoloPlaidItems();
+      const manual = await db.get<{ c: number }>(
+        `SELECT COUNT(*) AS c FROM accounts
+          WHERE user_id = ? AND deleted_at IS NULL AND item_id IS NULL`,
+        userId,
+      );
+      const capabilities = ["accounts", "balances", "transactions", "investments", "liabilities", "reauth", "recurring", "refresh"] as const;
+      const connections = items.map((item) => {
+        const attention = item.status === "login_required";
+        return {
+          id: item.id,
+          provider: "plaid" as const,
+          providerName: "Plaid",
+          institutionName: item.institutionName || "Plaid connection",
+          environment: item.environment,
+          state: attention ? ("needs_attention" as const) : ("healthy" as const),
+          rawStatus: attention ? "login_required" : "linked",
+          lastSuccessfulSyncAt: null,
+          lastError: attention ? "This connection needs you to sign in again." : null,
+          updatedAt: item.linkedAt,
+          capabilities: [...capabilities],
+          supportsRefresh: true,
+          supportsReauth: true,
+          accountCount: item.accounts.length,
+          accountNames: item.accounts.map((a) => a.name).sort((a, b) => a.localeCompare(b)),
+        };
+      });
+      return ok({
+        summary: {
+          connectionCount: connections.length,
+          healthyCount: connections.filter((c) => c.state === "healthy").length,
+          needsAttentionCount: connections.filter((c) => c.state === "needs_attention").length,
+          neverSyncedCount: items.filter((i) => !i.cursor).length,
+          manualAccountCount: manual?.c ?? 0,
+          lastSuccessfulSyncAt: null,
+        },
+        connections,
+      });
+    }
+
     if (method === "GET" && path === "/api/plaid/items") {
       const { getSoloPlaidItems } = await import("@/lib/solo-plaid-store");
       const items = getSoloPlaidItems().map((i) => ({
