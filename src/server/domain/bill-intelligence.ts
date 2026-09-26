@@ -3,9 +3,35 @@ import type { Db } from "@/server/db/types";
 import { addDaysISO, addMonthsISO, daysBetween, todayISO } from "@/server/domain/dates";
 import type { BillFrequency } from "@/server/domain/planning";
 import type { ProviderKind, ProviderRecurringStream } from "@/server/providers/types";
+import { objectReadScope } from "@/server/authz/household-access";
 
 const DETECTION_LOOKBACK_DAYS = 550;
 const OCCURRENCE_HORIZON_DAYS = 120;
+
+async function accountHouseholdScope(
+  db: Db,
+  accountId: string,
+  fallbackUserId: string,
+): Promise<{
+  householdId: string | null;
+  ownerUserId: string;
+  visibility: "shared" | "private";
+}> {
+  const account = await db.get<{
+    user_id: string;
+    household_id: string | null;
+    owner_user_id: string | null;
+    visibility: "shared" | "private";
+  }>(
+    "SELECT user_id, household_id, owner_user_id, visibility FROM accounts WHERE id = ?",
+    accountId,
+  );
+  return {
+    householdId: account?.household_id ?? null,
+    ownerUserId: account?.owner_user_id ?? account?.user_id ?? fallbackUserId,
+    visibility: account?.visibility ?? "shared",
+  };
+}
 
 export type OccurrenceStatus = "upcoming" | "overdue" | "paid" | "skipped";
 
@@ -500,18 +526,24 @@ export function createBillIntelligenceService(db: Db) {
       return null;
     }
 
+    const accountScope = await accountHouseholdScope(db, c.accountId, userId);
+
     if (!bill) {
       const id = randomUUID();
       await db.run(
         `INSERT INTO bills (
-           id, user_id, name, amount_cents, frequency, due_day, next_due_date,
+           id, user_id, household_id, owner_user_id, visibility,
+           name, amount_cents, frequency, due_day, next_due_date,
            last_paid_amount_cents, category_id, account_id, active, notes,
            created_at, updated_at, provider_liability_id, source, source_confidence,
            recurring_series_id, user_overridden
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?, ?, NULL,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?, ?, NULL,
                    'detected', 'predicted', ?, 0)`,
         id,
         userId,
+        accountScope.householdId,
+        accountScope.ownerUserId,
+        accountScope.visibility,
         c.displayName,
         c.typicalAmountCents,
         c.frequency,
@@ -534,7 +566,8 @@ export function createBillIntelligenceService(db: Db) {
         `UPDATE bills SET
            name = ?, amount_cents = ?, frequency = ?, due_day = ?,
            next_due_date = ?, category_id = COALESCE(?, category_id),
-           account_id = ?, active = 1, source = 'detected',
+           account_id = ?, household_id = ?, owner_user_id = ?, visibility = ?,
+           active = 1, source = 'detected',
            source_confidence = 'predicted', notes = ?, updated_at = ?
          WHERE id = ?`,
         c.displayName,
@@ -544,6 +577,9 @@ export function createBillIntelligenceService(db: Db) {
         c.nextExpectedDate,
         c.categoryId,
         c.accountId,
+        accountScope.householdId,
+        accountScope.ownerUserId,
+        accountScope.visibility,
         `Detected from ${c.occurrenceCount} recurring transactions · confidence ${Math.round(c.confidenceBps / 100)}%.`,
         ts,
         bill.id,
@@ -575,6 +611,7 @@ export function createBillIntelligenceService(db: Db) {
       if (stream.direction !== "outflow") continue;
       const accountId = accountByExternal.get(stream.accountExternalId);
       if (!accountId || !stream.nextExpectedDate || !stream.active) continue;
+      const accountScope = await accountHouseholdScope(db, accountId, userId);
       const frequency =
         stream.cadence && stream.cadence !== "unknown"
           ? stream.cadence
@@ -665,14 +702,18 @@ export function createBillIntelligenceService(db: Db) {
         const id = randomUUID();
         await db.run(
           `INSERT INTO bills (
-             id, user_id, name, amount_cents, frequency, due_day, next_due_date,
+             id, user_id, household_id, owner_user_id, visibility,
+             name, amount_cents, frequency, due_day, next_due_date,
              last_paid_amount_cents, category_id, account_id, active, notes,
              created_at, updated_at, provider_liability_id, source, source_confidence,
              recurring_series_id, user_overridden
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 1, ?,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 1, ?,
                      ?, ?, NULL, 'provider_recurring', 'provider', ?, 0)`,
           id,
           userId,
+          accountScope.householdId,
+          accountScope.ownerUserId,
+          accountScope.visibility,
           (stream.merchant ?? stream.description).slice(0, 100),
           amount,
           frequency,
@@ -688,7 +729,8 @@ export function createBillIntelligenceService(db: Db) {
       } else if (!bill.user_overridden) {
         await db.run(
           `UPDATE bills SET name = ?, amount_cents = ?, frequency = ?,
-             due_day = ?, next_due_date = ?, account_id = ?, active = 1,
+             due_day = ?, next_due_date = ?, account_id = ?,
+             household_id = ?, owner_user_id = ?, visibility = ?, active = 1,
              source = 'provider_recurring', source_confidence = 'provider',
              updated_at = ? WHERE id = ?`,
           (stream.merchant ?? stream.description).slice(0, 100),
@@ -697,6 +739,9 @@ export function createBillIntelligenceService(db: Db) {
           Number(stream.nextExpectedDate.slice(8, 10)),
           stream.nextExpectedDate,
           accountId,
+          accountScope.householdId,
+          accountScope.ownerUserId,
+          accountScope.visibility,
           ts,
           bill.id,
         );
@@ -1060,6 +1105,7 @@ export function createBillIntelligenceService(db: Db) {
       from = addDaysISO(todayISO(), -31),
       to = addDaysISO(todayISO(), 120),
     ): Promise<BillOccurrence[]> {
+      const scope = await objectReadScope(db, userId, "b");
       return db.all<BillOccurrence>(
         `SELECT o.*, b.name AS bill_name, b.frequency, a.name AS account_name,
                 l.statement_balance_cents, l.minimum_payment_cents
@@ -1067,9 +1113,9 @@ export function createBillIntelligenceService(db: Db) {
            JOIN bills b ON b.id = o.bill_id
            LEFT JOIN accounts a ON a.id = b.account_id
            LEFT JOIN liabilities l ON l.id = b.provider_liability_id
-          WHERE o.user_id = ? AND o.due_date BETWEEN ? AND ?
+          WHERE ${scope.clause} AND o.due_date BETWEEN ? AND ?
           ORDER BY o.due_date ASC, b.name COLLATE NOCASE ASC`,
-        userId,
+        ...scope.params,
         from,
         to,
       );
@@ -1085,7 +1131,10 @@ export function createBillIntelligenceService(db: Db) {
         bill_id: string;
         expected_amount_cents: number;
       }>(
-        "SELECT id, bill_id, expected_amount_cents FROM bill_occurrences WHERE id = ? AND user_id = ?",
+        `SELECT o.id, o.bill_id, o.expected_amount_cents
+           FROM bill_occurrences o
+           JOIN bills b ON b.id = o.bill_id
+          WHERE o.id = ? AND COALESCE(b.owner_user_id, b.user_id) = ?`,
         occurrenceId,
         userId,
       );
