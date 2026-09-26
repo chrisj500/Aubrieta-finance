@@ -20,6 +20,7 @@ interface UpdateStatus {
   running: boolean;
   source: string;
   canSelfUpdate: boolean;
+  canManageUpdates: boolean;
 }
 
 function isNativeApp(): boolean {
@@ -118,6 +119,21 @@ export function UpdatesCard() {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(3)}:${pad(0)}`;
   };
 
+  if (s && !s.canManageUpdates) {
+    return (
+      <Card className="lg:col-span-2">
+        <CardTitle>Updates</CardTitle>
+        <p className="mt-1 text-sm text-text-muted">
+          Instance updates are managed by the Aubrieta instance administrator.
+        </p>
+        <div className="mt-4 flex items-center gap-2 text-sm">
+          <Badge>v{s.currentVersion}</Badge>
+          <span className="text-text-muted">Host-level update controls are not available to this household user.</span>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card className="lg:col-span-2">
       <CardTitle>Updates</CardTitle>
@@ -163,9 +179,11 @@ export function UpdatesCard() {
       )}
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <Button variant="secondary" onClick={() => act.mutate({ action: "check" })} disabled={act.isPending}>
-          Check for updates
-        </Button>
+        {s?.canManageUpdates && (
+          <Button variant="secondary" onClick={() => act.mutate({ action: "check" })} disabled={act.isPending}>
+            Check for updates
+          </Button>
+        )}
         {s?.updateAvailable &&
           (s.canSelfUpdate && !native ? (
             <>

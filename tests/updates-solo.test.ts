@@ -21,6 +21,7 @@ describe("solo updates (browser-safe)", () => {
 
     const s0 = await svc.status();
     expect(s0.canSelfUpdate).toBe(false);
+    expect(s0.canManageUpdates).toBe(true);
     expect(s0.updateAvailable).toBe(false);
     expect(typeof s0.currentVersion).toBe("string");
 
