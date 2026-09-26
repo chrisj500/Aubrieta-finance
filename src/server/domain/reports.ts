@@ -2,6 +2,20 @@ import { getDb, type Db } from "@/server/db/registry";
 import { addDaysISO, addMonthsISO, todayISO } from "@/server/domain/dates";
 import { withAllowlist, type AllowlistCtx } from "@/server/db/allowlist";
 import { markLinkedTransfers } from "@/server/domain/transfers";
+import { accountReadScope, getHouseholdContext } from "@/server/authz/household-access";
+
+async function markHouseholdTransfers(db: Db, userId: string): Promise<void> {
+  const household = await getHouseholdContext(db, userId);
+  const members = household
+    ? await db.all<{ user_id: string }>(
+        "SELECT user_id FROM household_members WHERE household_id = ?",
+        household.householdId,
+      )
+    : [{ user_id: userId }];
+  for (const member of members) {
+    await markLinkedTransfers(db, member.user_id);
+  }
+}
 
 /**
  * Reports — aggregates derived from transactions. Every query is user-scoped
@@ -18,7 +32,8 @@ export function createReportsService(db: Db = getDb()) {
       includeExcluded = false,
       includePending = true
     ): Promise<Array<{ categoryId: string | null; categoryName: string; color: string | null; spentCents: number }>> {
-      await markLinkedTransfers(db, userId);
+      await markHouseholdTransfers(db, userId);
+      const scope = await accountReadScope(db, userId, "a");
       const allow = withAllowlist(allowlist ?? null, "a.id");
       const accountHistoryClause = includeExcluded ? "" : " AND a.deleted_at IS NULL";
       const pendingClause = includePending ? "" : " AND t.pending = 0";
@@ -28,12 +43,12 @@ export function createReportsService(db: Db = getDb()) {
           FROM transactions t
           JOIN accounts a ON a.id = t.account_id
           LEFT JOIN categories c ON c.id = t.user_category_id
-         WHERE a.user_id = ?${accountHistoryClause} AND t.date >= ? AND t.date < ?
+         WHERE ${scope.clause}${accountHistoryClause} AND t.date >= ? AND t.date < ?
            AND t.exclude_from_budgets = 0 AND t.is_transfer = 0 AND t.amount_cents < 0${pendingClause}
             ${allow.clause}
           GROUP BY t.user_category_id, c.name, c.color
           ORDER BY spentCents DESC`,
-        userId,
+        ...scope.params,
         from,
         to,
         ...allow.params
@@ -42,7 +57,8 @@ export function createReportsService(db: Db = getDb()) {
 
     /** One row per month (oldest → newest) for a bounded calendar window. */
     async cashflow(userId: string, months: number, allowlist?: AllowlistCtx | null, from?: string, to?: string, includeExcluded = false, includePending = true): Promise<Array<{ month: string; incomeCents: number; expenseCents: number; netCents: number }>> {
-      await markLinkedTransfers(db, userId);
+      await markHouseholdTransfers(db, userId);
+      const scope = await accountReadScope(db, userId, "a");
       const allow = withAllowlist(allowlist ?? null, "a.id");
       const accountHistoryClause = includeExcluded ? "" : " AND a.deleted_at IS NULL";
       const pendingClause = includePending ? "" : " AND t.pending = 0";
@@ -54,11 +70,11 @@ export function createReportsService(db: Db = getDb()) {
                 SUM(CASE WHEN t.amount_cents < 0 THEN -t.amount_cents ELSE 0 END) AS expenseCents
           FROM transactions t
           JOIN accounts a ON a.id = t.account_id
-         WHERE a.user_id = ?${accountHistoryClause} AND t.date >= ? AND t.date < ? AND t.exclude_from_budgets = 0 AND t.is_transfer = 0${pendingClause}
+         WHERE ${scope.clause}${accountHistoryClause} AND t.date >= ? AND t.date < ? AND t.exclude_from_budgets = 0 AND t.is_transfer = 0${pendingClause}
            ${allow.clause}
          GROUP BY substr(t.date, 1, 7)
          ORDER BY month ASC`,
-        userId,
+        ...scope.params,
         start,
         end,
         ...allow.params
@@ -82,6 +98,7 @@ export function createReportsService(db: Db = getDb()) {
       netCents: number;
       byType: Record<string, number>;
     }> {
+      const scope = await accountReadScope(db, userId, "accounts");
       const allow = withAllowlist(allowlist ?? null, "id");
       const accountHistoryClause = includeExcluded ? "" : " AND deleted_at IS NULL";
       const pendingClause = includePending
@@ -91,8 +108,8 @@ export function createReportsService(db: Db = getDb()) {
         `SELECT type,
                   COALESCE(SUM(CASE WHEN type IN ('credit', 'loan') THEN -ABS(COALESCE(current_balance_cents, 0))
                                    ELSE COALESCE(current_balance_cents, 0) END${pendingClause}), 0) AS balance
-          FROM accounts WHERE user_id = ? AND hidden = 0${accountHistoryClause} AND include_in_net_worth = 1${allow.clause} GROUP BY type`,
-        userId,
+          FROM accounts WHERE ${scope.clause} AND hidden = 0${accountHistoryClause} AND include_in_net_worth = 1${allow.clause} GROUP BY type`,
+        ...scope.params,
         ...allow.params
       );
       let assets = 0;
@@ -134,14 +151,15 @@ export function createReportsService(db: Db = getDb()) {
       allowlist?: AllowlistCtx | null,
       includeExcluded = false
     ): Promise<Array<{ date: string; netCents: number; assetsCents: number; liabilitiesCents: number }>> {
+      const scope = await accountReadScope(db, userId, "a");
       const allow = withAllowlist(allowlist ?? null, "a.id");
       const accountHistoryClause = includeExcluded ? "" : " AND a.deleted_at IS NULL";
       const rows = await db.all<{ account_id: string; type: string | null; date: string; balance_cents: number }>(
         `SELECT bh.account_id AS account_id, a.type AS type, bh.date AS date, bh.balance_cents AS balance_cents
            FROM balance_history bh
            JOIN accounts a ON a.id = bh.account_id
-          WHERE a.user_id = ? AND a.hidden = 0 AND a.include_in_net_worth = 1${accountHistoryClause}${allow.clause}`,
-        userId,
+          WHERE ${scope.clause} AND a.hidden = 0 AND a.include_in_net_worth = 1${accountHistoryClause}${allow.clause}`,
+        ...scope.params,
         ...allow.params
       );
       // Group per account, sorted ascending by date.
