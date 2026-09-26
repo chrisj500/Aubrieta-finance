@@ -26,6 +26,7 @@ import { PlaidLinkLauncher } from "@/components/plaid-link-launcher";
 import { TellerSettingsCard } from "@/components/teller-settings-card";
 import { SimpleFinSettingsCard } from "@/components/simplefin-settings-card";
 import { AkoyaSettingsCard } from "@/components/akoya-settings-card";
+import { HouseholdSettingsCard } from "@/components/household-settings-card";
 
 // Inline fetch-failure surface for a settings sub-card query: a calm alert + retry,
 // shown only when the query errored AND has no data (a background refetch error never
@@ -304,6 +305,12 @@ export default function SettingsPage() {
           </Button>
         </Card>
       </SettingsGroup>
+
+      {!solo && (
+        <SettingsGroup title="Household" description="Members, invitations, and shared finance access.">
+          <HouseholdSettingsCard setMsg={setMsg} setErr={setErr} />
+        </SettingsGroup>
+      )}
 
       <SettingsGroup title="Security" description="Device lock, notifications, and account recovery.">
         <NotificationsSecurityCard setMsg={setMsg} setErr={setErr} />
