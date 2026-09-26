@@ -7,6 +7,7 @@ import { createSimpleFinService } from "@/server/simplefin/service";
 import { createAkoyaService } from "@/server/akoya/service";
 import { getDb } from "@/server/db/adapter";
 import { createBillIntelligenceService } from "@/server/domain/bill-intelligence";
+import { isolateProviderBatch } from "@/server/providers/batch-isolation";
 
 export const runtime = "nodejs";
 
@@ -16,10 +17,61 @@ export async function POST(req: NextRequest) {
     requireCsrf(req);
     const db = getDb();
     const [plaid, teller, simplefin, akoya] = await Promise.all([
-      createSyncService(db).syncAll(session.userId),
-      createTellerService(db).syncAll(session.userId),
-      createSimpleFinService(db).syncAll(session.userId),
-      createAkoyaService(db).syncAll(session.userId, "USER"),
+      isolateProviderBatch(
+        "plaid",
+        () => createSyncService(db).syncAll(session.userId),
+        (error) => ({
+          itemId: "plaid:provider-batch",
+          institutionName: null,
+          added: 0,
+          modified: 0,
+          removed: 0,
+          ok: false,
+          error,
+        }),
+      ),
+      isolateProviderBatch(
+        "teller",
+        () => createTellerService(db).syncAll(session.userId),
+        (error) => ({
+          connectionId: "teller:provider-batch",
+          provider: "teller" as const,
+          institutionName: null,
+          added: 0,
+          modified: 0,
+          removed: 0,
+          ok: false,
+          error,
+        }),
+      ),
+      isolateProviderBatch(
+        "simplefin",
+        () => createSimpleFinService(db).syncAll(session.userId),
+        (error) => ({
+          connectionId: "simplefin:provider-batch",
+          provider: "simplefin" as const,
+          institutionName: null,
+          added: 0,
+          modified: 0,
+          removed: 0,
+          ok: false,
+          error,
+        }),
+      ),
+      isolateProviderBatch(
+        "akoya",
+        () => createAkoyaService(db).syncAll(session.userId, "USER"),
+        (error) => ({
+          connectionId: "akoya:provider-batch",
+          provider: "akoya" as const,
+          institutionName: null,
+          added: 0,
+          modified: 0,
+          removed: 0,
+          ok: false,
+          error,
+        }),
+      ),
     ]);
     const results = [
       ...plaid.map((r) => ({ ...r, provider: "plaid" as const })),

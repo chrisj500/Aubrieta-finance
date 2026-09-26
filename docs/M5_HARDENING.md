@@ -112,13 +112,15 @@ Closed:
 - the one-line installer now downloads Aubrieta from `chrisj500/Aubrieta-finance` rather than the historical upstream repository
 - the hub still executes only the fixed operator-controlled `UPDATE_SCRIPT`; release metadata cannot select commands or scripts
 
-### M5.4 — Provider failure isolation regression — medium/high
+### M5.4 — Provider failure isolation regression — medium/high — complete
 
-Existing behavior is mostly fail-soft, but route-level integration coverage should prove:
-- one failed provider does not prevent other provider results from returning
-- optional capability failures preserve prior liabilities/holdings/recurring data
-- a failed connection records error state without corrupting another connection
-- provider tenant mismatch always fails closed
+Closed:
+- the aggregate sync route isolates unexpected provider-wide failures so one provider cannot reject the entire multi-provider refresh
+- provider-specific result shapes are preserved, including Plaid's existing `itemId` contract
+- a provider-wide failure returns a generic synthetic failed result rather than leaking the underlying exception
+- optional capability failures preserve prior liabilities/holdings/recurring snapshots
+- a failed connection records error state without corrupting another successful connection
+- existing multi-household regression coverage proves provider tenant mismatch fails closed before provider data is fetched/written
 
 ### M5.5 — Webhook authenticity gate — deferred until webhooks exist
 
