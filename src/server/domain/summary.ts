@@ -4,6 +4,7 @@ import { withAllowlist, type AllowlistCtx } from "@/server/db/allowlist";
 import { markLinkedTransfers } from "@/server/domain/transfers";
 import { createBillIntelligenceService } from "@/server/domain/bill-intelligence";
 import { addDaysISO, todayISO } from "@/server/domain/dates";
+import { accountReadScope, getHouseholdContext } from "@/server/authz/household-access";
 
 /** Dashboard one-call briefing. */
 export interface Summary {
@@ -58,9 +59,20 @@ export function createSummaryService(db: Db = getDb()) {
       includeExcluded = false,
       includePending = true
     ): Promise<Summary> {
-      // Backfill linked card-payment transfers before calculating totals. This
-      // also corrects transactions imported before transfer detection existed.
-      await markLinkedTransfers(db, userId);
+      // Backfill linked card-payment transfers for each household member whose
+      // shared accounts may contribute to this view.
+      const household = await getHouseholdContext(db, userId);
+      const householdUsers = household
+        ? await db.all<{ user_id: string }>(
+            "SELECT user_id FROM household_members WHERE household_id = ?",
+            household.householdId,
+          )
+        : [{ user_id: userId }];
+      for (const member of householdUsers) {
+        await markLinkedTransfers(db, member.user_id);
+      }
+      const accountScope = await accountReadScope(db, userId, "accounts");
+      const txnScope = await accountReadScope(db, userId, "a");
       const { start, end } = frame.kind === "period" ? monthBounds(referenceDate) : frameBounds(frame, referenceDate);
       const allowAccounts = withAllowlist(allowlist ?? null, "id");
       const allowTxns = withAllowlist(allowlist ?? null, "a.id");
@@ -76,8 +88,8 @@ export function createSummaryService(db: Db = getDb()) {
         `SELECT type,
                   COALESCE(SUM(CASE WHEN type IN ('credit', 'loan') THEN -ABS(COALESCE(current_balance_cents, 0))
                                    ELSE COALESCE(current_balance_cents, 0) END${pendingClause}), 0) AS balance
-          FROM accounts WHERE user_id = ? AND hidden = 0 AND deleted_at IS NULL AND include_in_net_worth = 1${allowAccounts.clause} GROUP BY type`,
-        userId,
+          FROM accounts WHERE ${accountScope.clause} AND hidden = 0 AND deleted_at IS NULL AND include_in_net_worth = 1${allowAccounts.clause} GROUP BY type`,
+        ...accountScope.params,
         ...allowAccounts.params
       );
       const byType: Record<string, number> = {};
@@ -97,9 +109,9 @@ export function createSummaryService(db: Db = getDb()) {
            COALESCE(SUM(CASE WHEN t.amount_cents < 0 THEN -t.amount_cents ELSE 0 END), 0) AS expense
            FROM transactions t
            JOIN accounts a ON a.id = t.account_id
-          WHERE a.user_id = ?${accountHistoryClause} AND t.date >= ? AND t.date < ? AND t.exclude_from_budgets = 0 AND t.is_transfer = 0${monthPendingClause}
+          WHERE ${txnScope.clause}${accountHistoryClause} AND t.date >= ? AND t.date < ? AND t.exclude_from_budgets = 0 AND t.is_transfer = 0${monthPendingClause}
             ${allowTxns.clause}`,
-        userId,
+        ...txnScope.params,
         start,
         end,
         ...allowTxns.params
@@ -117,8 +129,10 @@ export function createSummaryService(db: Db = getDb()) {
       }));
 
       const billIntelligence = createBillIntelligenceService(db);
-      await billIntelligence.ensureOccurrences(userId);
-      await billIntelligence.matchPayments(userId);
+      for (const member of householdUsers) {
+        await billIntelligence.ensureOccurrences(member.user_id);
+        await billIntelligence.matchPayments(member.user_id);
+      }
       const billOccurrences = await billIntelligence.listOccurrences(
         userId,
         addDaysISO(todayISO(), -365),
@@ -150,10 +164,10 @@ export function createSummaryService(db: Db = getDb()) {
            FROM transactions t
            JOIN accounts a ON a.id = t.account_id
            LEFT JOIN categories c ON c.id = t.user_category_id
-          WHERE a.user_id = ?${accountHistoryClause}${allowTxns.clause}
+          WHERE ${txnScope.clause}${accountHistoryClause}${allowTxns.clause}
           ORDER BY t.date DESC, t.created_at DESC
           LIMIT 8`,
-        userId,
+        ...txnScope.params,
         ...allowTxns.params
       );
 
@@ -171,18 +185,18 @@ export function createSummaryService(db: Db = getDb()) {
         reviewDebug: await (async () => {
           const raw = await db.get<{ c: number }>(
             `SELECT COUNT(*) AS c FROM transactions t JOIN accounts a ON a.id = t.account_id
-              WHERE a.user_id = ? AND a.deleted_at IS NULL AND t.user_category_id IS NULL AND t.source != 'manual'`,
-            userId
+              WHERE ${txnScope.clause} AND a.deleted_at IS NULL AND t.user_category_id IS NULL AND t.source != 'manual'`,
+            ...txnScope.params,
           );
           const transfers = await db.get<{ c: number }>(
             `SELECT COUNT(*) AS c FROM transactions t JOIN accounts a ON a.id = t.account_id
-              WHERE a.user_id = ? AND a.deleted_at IS NULL AND t.user_category_id IS NULL AND t.source != 'manual' AND t.is_transfer = 1`,
-            userId
+              WHERE ${txnScope.clause} AND a.deleted_at IS NULL AND t.user_category_id IS NULL AND t.source != 'manual' AND t.is_transfer = 1`,
+            ...txnScope.params,
           );
           const pending = await db.get<{ c: number }>(
             `SELECT COUNT(*) AS c FROM transactions t JOIN accounts a ON a.id = t.account_id
-              WHERE a.user_id = ? AND a.deleted_at IS NULL AND t.user_category_id IS NULL AND t.source != 'manual' AND t.is_transfer = 0 AND t.pending = 1`,
-            userId
+              WHERE ${txnScope.clause} AND a.deleted_at IS NULL AND t.user_category_id IS NULL AND t.source != 'manual' AND t.is_transfer = 0 AND t.pending = 1`,
+            ...txnScope.params,
           );
           const rawC = raw?.c ?? 0;
           const txC = transfers?.c ?? 0;
