@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { encrypt } from "@/lib/crypto";
 import { apiErrors } from "@/lib/api-error";
 import type { Db } from "@/server/db/types";
+import { getHouseholdContext } from "@/server/authz/household-access";
 
 const MAGIC = "OFBAK-SOLO1";
 const VERSION = 1;
@@ -69,6 +70,8 @@ export function createPhoneImportService(db: Db) {
     const accountMap = new Map<string, string>();
     const itemMap = new Map<string, string>();
     const categoryMap = new Map<string, string>();
+    const household = await getHouseholdContext(db, userId);
+    const householdId = household?.householdId ?? null;
     let importedPlaid = 0;
 
     // Recreate the phone's Plaid credentials/items on the hub. The phone
@@ -131,8 +134,8 @@ export function createPhoneImportService(db: Db) {
         const id = existing?.id ?? randomUUID();
         if (!existing) {
           await db.run(
-            "INSERT INTO accounts (id, user_id, item_id, plaid_account_id, name, official_name, type, subtype, mask, current_balance_cents, available_balance_cents, currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            id, userId, itemMap.get(text(row, "item_id") ?? "") ?? null, plaidId, text(row, "name") ?? "Imported account", text(row, "official_name"), text(row, "type"), text(row, "subtype"), text(row, "mask"), integer(row, "current_balance_cents"), integer(row, "available_balance_cents"), text(row, "currency") ?? "USD", text(row, "created_at") ?? new Date().toISOString()
+            "INSERT INTO accounts (id, user_id, household_id, owner_user_id, visibility, item_id, plaid_account_id, name, official_name, type, subtype, mask, current_balance_cents, available_balance_cents, currency, created_at) VALUES (?, ?, ?, ?, 'shared', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            id, userId, householdId, userId, itemMap.get(text(row, "item_id") ?? "") ?? null, plaidId, text(row, "name") ?? "Imported account", text(row, "official_name"), text(row, "type"), text(row, "subtype"), text(row, "mask"), integer(row, "current_balance_cents"), integer(row, "available_balance_cents"), text(row, "currency") ?? "USD", text(row, "created_at") ?? new Date().toISOString()
           );
           imported.accounts++;
         }
@@ -158,7 +161,7 @@ export function createPhoneImportService(db: Db) {
         const existing = await db.get<{ id: string }>("SELECT id FROM budgets WHERE user_id = ? AND name = ?", userId, name);
         const id = existing?.id ?? randomUUID();
         if (!existing) {
-          await db.run("INSERT INTO budgets (id, user_id, name, amount_cents, period, created_at) VALUES (?, ?, ?, ?, ?, ?)", id, userId, name, integer(row, "amount_cents") ?? 0, text(row, "period") ?? "monthly", text(row, "created_at") ?? new Date().toISOString());
+          await db.run("INSERT INTO budgets (id, user_id, household_id, owner_user_id, visibility, name, amount_cents, period, created_at) VALUES (?, ?, ?, ?, 'shared', ?, ?, ?, ?)", id, userId, householdId, userId, name, integer(row, "amount_cents") ?? 0, text(row, "period") ?? "monthly", text(row, "created_at") ?? new Date().toISOString());
           imported.budgets++;
         }
         const oldId = text(row, "id");
@@ -178,9 +181,9 @@ export function createPhoneImportService(db: Db) {
           const exists = await db.get<{ id: string }>(`SELECT id FROM ${table} WHERE user_id = ? AND name = ?`, userId, name);
           if (exists) continue;
           const id = randomUUID();
-          if (table === "bills") await db.run("INSERT INTO bills (id,user_id,name,amount_cents,frequency,due_day,next_due_date,last_paid_amount_cents,category_id,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", id,userId,name,integer(row,"amount_cents")??0,text(row,"frequency")??"monthly",integer(row,"due_day"),text(row,"next_due_date"),integer(row,"last_paid_amount_cents"),categoryMap.get(text(row,"category_id")??"")??null,text(row,"notes"),new Date().toISOString(),new Date().toISOString());
-          if (table === "debts") await db.run("INSERT INTO debts (id,user_id,name,type,principal_cents,apr_bps,min_payment_cents,term_months,start_date,next_due_date,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", id,userId,name,text(row,"type")??"other",integer(row,"principal_cents")??0,integer(row,"apr_bps")??0,integer(row,"min_payment_cents")??0,integer(row,"term_months"),text(row,"start_date")??new Date().toISOString().slice(0,10),text(row,"next_due_date"),text(row,"notes"),new Date().toISOString(),new Date().toISOString());
-          if (table === "goals") await db.run("INSERT INTO goals (id,user_id,name,type,category,target_cents,target_date,current_cents,monthly_contribution_cents,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", id,userId,name,text(row,"type")??"savings",text(row,"category")??"general",integer(row,"target_cents")??0,text(row,"target_date"),integer(row,"current_cents")??0,integer(row,"monthly_contribution_cents"),text(row,"notes"),new Date().toISOString(),new Date().toISOString());
+          if (table === "bills") await db.run("INSERT INTO bills (id,user_id,household_id,owner_user_id,visibility,name,amount_cents,frequency,due_day,next_due_date,last_paid_amount_cents,category_id,notes,created_at,updated_at) VALUES (?,?,?,?,'shared',?,?,?,?,?,?,?,?,?,?)", id,userId,householdId,userId,name,integer(row,"amount_cents")??0,text(row,"frequency")??"monthly",integer(row,"due_day"),text(row,"next_due_date"),integer(row,"last_paid_amount_cents"),categoryMap.get(text(row,"category_id")??"")??null,text(row,"notes"),new Date().toISOString(),new Date().toISOString());
+          if (table === "debts") await db.run("INSERT INTO debts (id,user_id,household_id,owner_user_id,visibility,name,type,principal_cents,apr_bps,min_payment_cents,term_months,start_date,next_due_date,notes,created_at,updated_at) VALUES (?,?,?,?,'shared',?,?,?,?,?,?,?,?,?,?,?)", id,userId,householdId,userId,name,text(row,"type")??"other",integer(row,"principal_cents")??0,integer(row,"apr_bps")??0,integer(row,"min_payment_cents")??0,integer(row,"term_months"),text(row,"start_date")??new Date().toISOString().slice(0,10),text(row,"next_due_date"),text(row,"notes"),new Date().toISOString(),new Date().toISOString());
+          if (table === "goals") await db.run("INSERT INTO goals (id,user_id,household_id,owner_user_id,visibility,name,type,category,target_cents,target_date,current_cents,monthly_contribution_cents,notes,created_at,updated_at) VALUES (?,?,?,?,'shared',?,?,?,?,?,?,?,?,?,?)", id,userId,householdId,userId,name,text(row,"type")??"savings",text(row,"category")??"general",integer(row,"target_cents")??0,text(row,"target_date"),integer(row,"current_cents")??0,integer(row,"monthly_contribution_cents"),text(row,"notes"),new Date().toISOString(),new Date().toISOString());
           imported[table]++;
         }
       }
