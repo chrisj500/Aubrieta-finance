@@ -141,10 +141,20 @@ Decision and closure for the current deployment model:
 - if MFA is added later, define recovery and session revocation first; TOTP secrets must be encrypted at rest and replay/rate-limit behavior tested, while WebAuthn must account for stable RP ID/origin requirements across self-hosted hostnames
 - do not weaken or replace the current password/recovery path merely to add a second authentication mechanism
 
-### M5.7 — Production-provider smoke tests — final M5 gate
+### M5.7 — Production-provider smoke tests — final M5 gate — harness complete; live run pending
 
-Create opt-in/environment-gated smoke procedures for configured real providers. They must not run in ordinary CI or require production secrets on the self-hosted runners. Minimum vertical smoke:
-connect -> sync accounts/transactions -> liabilities where supported -> connection health -> resync/re-auth path.
+Implemented:
+- `npm run smoke:providers` is an explicit operator-only harness against a running Aubrieta instance
+- it requires `AUBRIETA_PROVIDER_SMOKE=YES_I_UNDERSTAND` plus an explicit provider list and authenticated session/login
+- remote plain HTTP is rejected; provider sandbox connections require a second explicit opt-in
+- the harness reuses the product's real aggregate sync, connection-health, provider connection-list and account-detail APIs; no provider credentials are passed to or printed by the runner
+- it performs two sync passes, verifies linked accounts and healthy timestamps, and checks provider liability detail when a liability-capable provider has a linked credit/loan account
+- it prints only provider names/counts and generic failures, never balances, transactions, account/institution names, tokens or secrets
+- interactive provider enrollment/re-auth remains a human UI prerequisite/path; a re-auth-required connection fails smoke through sync/health and is repaired through the normal provider UI
+- ordinary CI must not invoke the live smoke and the self-hosted runners must not receive production provider secrets
+
+Final M5 gate:
+- perform and record at least one successful live-provider run using `docs/PROVIDER_SMOKE.md`; until then the harness is shipped but M5 is not declared complete
 
 ## Accepted/deferred risks
 
