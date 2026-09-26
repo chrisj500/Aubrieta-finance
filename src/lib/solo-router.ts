@@ -27,6 +27,7 @@ import { isNativePlatform } from "@/lib/mobile-mode";
 import { createSoloBootstrapService } from "@/server/domain/solo-bootstrap";
 import { createDeviceLockService } from "@/server/domain/device-lock";
 import { createAccountsService } from "@/server/domain/accounts";
+import { createAccountDetailService } from "@/server/domain/account-detail";
 import { createCategoriesService } from "@/server/domain/categories";
 import { createTransactionsService } from "@/server/domain/transactions";
 import { createBudgetsService, type BudgetFrame } from "@/server/domain/budgets";
@@ -130,6 +131,7 @@ async function handlers(db: Db) {
   const solo = createSoloBootstrapService(db);
   const deviceLock = createDeviceLockService(db);
   const accounts = createAccountsService(db);
+  const accountDetail = createAccountDetailService(db);
   const categories = createCategoriesService(db);
   const transactions = createTransactionsService(db);
   const budgets = createBudgetsService(db);
@@ -150,6 +152,7 @@ async function handlers(db: Db) {
     solo,
     deviceLock,
     accounts,
+    accountDetail,
     categories,
     transactions,
     budgets,
@@ -389,6 +392,11 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
       }
       const rows = await h.accounts.list(userId);
       return ok({ accounts: rows });
+    }
+    if (method === "GET" && path.startsWith("/api/accounts/")) {
+      const userId = await h.deviceUserId();
+      const id = parseId(path, "/api/accounts/");
+      return ok(await h.accountDetail.get(userId, id));
     }
     if (method === "PUT" && path === "/api/accounts/order") {
       const userId = await h.deviceUserId();
