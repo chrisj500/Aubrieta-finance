@@ -5,6 +5,7 @@ import { createRateLimiter } from "@/lib/rate-limit";
 import { getDb, type Db } from "@/server/db/adapter";
 import { createSession, getSessionFromRequest, type Duration, type SessionInfo } from "./sessions";
 import { hashPassword, validatePasswordPolicy, verifyPassword } from "./password";
+import { createHouseholdService } from "@/server/domain/households";
 
 // Static bcrypt hash (cost 12) used ONLY to burn CPU time in the login
 // nonexistent-user path so it matches real-user timing. It is NOT a real
@@ -54,7 +55,13 @@ export const demoLimiter = createRateLimiter({ windowMs: 60_000, max: 5 });
 
 export function createAuthService(db: Db = getDb()) {
   return {
-    async register(input: { username: string; display_name: string; password: string }) {
+    async register(input: {
+      username: string;
+      display_name: string;
+      password: string;
+      inviteToken?: string;
+      requireInvitation?: boolean;
+    }) {
       const username = input.username.trim().toLowerCase();
       if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
         throw apiErrors.badRequest(
@@ -66,22 +73,35 @@ export function createAuthService(db: Db = getDb()) {
       if (policy) throw apiErrors.badRequest(policy);
       const existing = await db.get("SELECT id FROM users WHERE username = ?", username);
       if (existing) throw apiErrors.conflict("That username is already taken.");
+
+      const realUsers = await db.get<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM users WHERE is_demo = 0 AND username IS NOT NULL",
+      );
+      const needsInvitation = input.requireInvitation === true && (realUsers?.n ?? 0) > 0;
+      if (needsInvitation && !input.inviteToken) {
+        throw apiErrors.forbidden("New household members must use an invitation link.");
+      }
+
       const id = randomUUID();
-      await db.run(
-        `INSERT INTO users (id, username, display_name, password_hash, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        id,
-        username,
-        display_name,
-        await hashPassword(input.password),
-        now(),
-        now()
-      );
-      await db.run(
-        "INSERT INTO user_settings (user_id, updated_at) VALUES (?, ?)",
-        id,
-        now()
-      );
+      const passwordHash = await hashPassword(input.password);
+      const ts = now();
+      await db.transaction(async () => {
+        await db.run(
+          `INSERT INTO users (id, username, display_name, password_hash, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          id, username, display_name, passwordHash, ts, ts,
+        );
+        await db.run(
+          "INSERT INTO user_settings (user_id, updated_at) VALUES (?, ?)",
+          id, ts,
+        );
+        const household = createHouseholdService(db);
+        if (input.inviteToken) {
+          await household.claimInvitation(input.inviteToken, id);
+        } else {
+          await household.createForUser(id);
+        }
+      });
       return { user: await this.getUserById(id) };
     },
 
@@ -210,6 +230,25 @@ export function createAuthService(db: Db = getDb()) {
 
     async deleteUser(userId: string) {
       await db.transaction(async () => {
+        const membership = await db.get<{
+          household_id: string;
+          role: "owner" | "member";
+        }>(
+          "SELECT household_id, role FROM household_members WHERE user_id = ?",
+          userId,
+        );
+        if (membership?.role === "owner") {
+          const members = await db.get<{ n: number }>(
+            "SELECT COUNT(*) AS n FROM household_members WHERE household_id = ?",
+            membership.household_id,
+          );
+          if ((members?.n ?? 0) > 1) {
+            throw apiErrors.forbidden(
+              "Remove the other household members before deleting the household owner account.",
+            );
+          }
+        }
+
         // Tables keyed by token/budget/account subqueries first (parents still exist).
         await db.run(
           "DELETE FROM agent_permission_requests WHERE token_id IN (SELECT id FROM agent_tokens WHERE user_id = ?)",
@@ -240,6 +279,9 @@ export function createAuthService(db: Db = getDb()) {
           await db.run(`DELETE FROM ${table} WHERE user_id = ?`, userId);
         }
         await db.run("DELETE FROM users WHERE id = ?", userId);
+        if (membership?.role === "owner") {
+          await db.run("DELETE FROM households WHERE id = ?", membership.household_id);
+        }
       });
     },
 
