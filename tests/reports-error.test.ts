@@ -11,7 +11,7 @@ describe("reports page fetch error handling", () => {
   it("collects failed queries gated on no-data so rendered charts are never blanked", () => {
     // all 6 report queries are covered by the failure sweep
     expect(src).toContain(
-      "[byCategory, monthSummary, cashflow, netWorth, netWorthTrend, projection].filter("
+      "[byCategory, previousByCategory, monthSummary, cashflow, spendingTrend, netWorth, netWorthTrend, projection].filter("
     );
     // gated on isError && !data (background refetch errors don't blank charts)
     expect(src).toContain("q.isError && !q.data");

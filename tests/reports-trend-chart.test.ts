@@ -25,7 +25,7 @@ describe("reports page net-worth trend chart", () => {
   });
 
   it("renders a 3/6/12-month range selector with aria-pressed state", () => {
-    expect(src).toContain('aria-label="Net worth trend range"');
+    expect(src).toContain('aria-label="Trends range"');
     expect(src).toContain("[3, 6, 12].map((m) =>");
     expect(src).toContain("aria-pressed={trendMonths === m}");
     expect(src).toContain("onClick={() => setTrendMonths(m)}");
@@ -49,7 +49,7 @@ describe("reports page net-worth trend chart", () => {
 
   it("places the trend card AFTER the net-worth stat cards", () => {
     const cards = src.indexOf("<CardLabel>Net worth</CardLabel>");
-    const chart = src.indexOf("<CardTitle>Net worth trend</CardTitle>");
+    const chart = src.indexOf("<CardTitle>Net worth trend — last {trendMonths} months</CardTitle>");
     expect(cards).toBeGreaterThan(-1);
     expect(chart).toBeGreaterThan(cards);
   });
