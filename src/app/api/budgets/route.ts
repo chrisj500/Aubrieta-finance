@@ -17,6 +17,7 @@ const createSchema = z.object({
   ),
   period: z.enum(["weekly", "monthly", "yearly"]).optional(),
   categoryIds: z.array(z.string()).optional(),
+  visibility: z.enum(["shared", "private"]).optional(),
 });
 
 /** Budgets — user session, or agent token (read:budgets / budgets:write). */
