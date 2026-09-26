@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { env } from "@/lib/env";
 import { apiErrors } from "@/lib/api";
 import { verifyPassword } from "@/server/auth/password";
@@ -11,11 +12,12 @@ import { getDb, type Db } from "@/server/db/adapter";
  *
  * Backup = the SQLite file, encrypted at rest with AES-256-GCM under the same
  * ENCRYPTION_KEY the install uses (so a backup is useless without the key that
- * produced it — document: restore requires the same ENCRYPTION_KEY).
+ * produced it — restore requires the same ENCRYPTION_KEY).
  *
- * Restore = password-confirmed (agent tokens can never restore), replaces the
- * DB after an explicit confirm; a pre-restore auto-backup is written first so a
- * bad restore is never data loss. Wrong key → GCM auth failure → clean 400.
+ * Restore = password-confirmed (agent tokens can never restore), validates and
+ * migrates a same-directory staging DB before touching the live file, writes an
+ * encrypted pre-restore safety backup, then swaps atomically with rollback if
+ * activation/reopen fails. Wrong key → GCM auth failure → clean 400.
  */
 
 const ALGO = "aes-256-gcm";
@@ -31,12 +33,6 @@ const AAD = "open-finance:backup:v1";
  */
 export const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 
-/**
- * Reject oversized backup uploads BEFORE buffering/decrypting. Pass the
- * declared Content-Length header (may be null/absent) and/or the parsed file
- * size; either exceeding MAX_BACKUP_BYTES throws 413. A non-numeric
- * Content-Length is ignored here (the size check after parsing still applies).
- */
 export function assertBackupSize(declaredContentLength: string | null, fileSize: number | null): void {
   const declared = declaredContentLength === null ? NaN : Number(declaredContentLength);
   if (
@@ -83,6 +79,99 @@ export function decryptBackup(envelope: Buffer): Buffer {
   }
 }
 
+type RawSqlite = {
+  pragma(source: string, options?: { simple?: boolean }): unknown;
+  exec(source: string): void;
+  close(): void;
+};
+
+type RawSqliteConstructor = new (filename: string) => RawSqlite;
+
+function sqliteRuntime(): {
+  Database: RawSqliteConstructor;
+  runMigrations: (db: RawSqlite, dir?: string) => { applied: number; current: number };
+  migrationsDir: string;
+} {
+  const require = createRequire(import.meta.url);
+  const Database: RawSqliteConstructor = require("better-sqlite3");
+  const { runMigrations }: {
+    runMigrations: (db: RawSqlite, dir?: string) => { applied: number; current: number };
+  } = require("../../../migrations/up.js");
+  return { Database, runMigrations, migrationsDir: path.resolve(process.cwd(), "migrations") };
+}
+
+function latestMigrationVersion(migrationsDir: string): number {
+  const versions = fs
+    .readdirSync(migrationsDir)
+    .filter((name) => /^\d+_.*\.sql$/.test(name))
+    .map((name) => Number.parseInt(name, 10))
+    .filter(Number.isFinite);
+  if (versions.length === 0) throw new Error("No database migrations are available.");
+  return Math.max(...versions);
+}
+
+function assertSqliteIntegrity(db: RawSqlite, phase: string): void {
+  const result = db.pragma("quick_check", { simple: true });
+  if (result !== "ok") {
+    throw apiErrors.badRequest(`Backup database failed SQLite integrity validation (${phase}).`);
+  }
+}
+
+function removeSqliteSidecars(dbPath: string): void {
+  fs.rmSync(`${dbPath}-wal`, { force: true });
+  fs.rmSync(`${dbPath}-shm`, { force: true });
+}
+
+function uniqueSibling(dbPath: string, label: string, extension = ".db"): string {
+  const suffix = `${Date.now()}-${randomBytes(8).toString("hex")}`;
+  return path.join(path.dirname(dbPath), `${label}-${suffix}${extension}`);
+}
+
+function validateAndMigrateStaging(stagingPath: string): number {
+  const { Database, runMigrations, migrationsDir } = sqliteRuntime();
+  const expectedVersion = latestMigrationVersion(migrationsDir);
+  let raw: RawSqlite | null = null;
+  try {
+    raw = new Database(stagingPath);
+    assertSqliteIntegrity(raw, "before migration");
+    const migration = runMigrations(raw, migrationsDir);
+    assertSqliteIntegrity(raw, "after migration");
+    const userVersion = Number(raw.pragma("user_version", { simple: true }));
+    if (migration.current !== expectedVersion || userVersion !== expectedVersion) {
+      throw apiErrors.badRequest("Backup database did not migrate to the current schema version.");
+    }
+    raw.pragma("wal_checkpoint(FULL)");
+    raw.pragma("journal_mode = DELETE");
+    return expectedVersion;
+  } catch (error) {
+    if (error instanceof Error && "status" in error) throw error;
+    throw apiErrors.badRequest("Backup database could not be validated and migrated.");
+  } finally {
+    try {
+      raw?.close();
+    } catch {
+      // best effort cleanup; validation result is already determined
+    }
+  }
+}
+
+function validateActivatedDatabase(dbPath: string, expectedVersion: number): void {
+  const { Database } = sqliteRuntime();
+  let raw: RawSqlite | null = null;
+  try {
+    raw = new Database(dbPath);
+    assertSqliteIntegrity(raw, "after activation");
+    const userVersion = Number(raw.pragma("user_version", { simple: true }));
+    if (userVersion !== expectedVersion) throw new Error("Activated database schema version mismatch.");
+  } finally {
+    try {
+      raw?.close();
+    } catch {
+      // activation failure is handled by the caller's rollback path
+    }
+  }
+}
+
 export interface RestoreResult {
   restored: true;
   preRestoreBackupPath: string | null;
@@ -90,20 +179,15 @@ export interface RestoreResult {
 
 export function createBackupService(db: Db = getDb(), dbPathOverride?: string) {
   const dbPath = () => dbPathOverride ?? env.DATABASE_PATH;
+  const usesSingleton = dbPathOverride === undefined;
 
-  /** Raw backup envelope bytes (download as application/octet-stream). */
   async function exportBackup(): Promise<Buffer> {
     const p = dbPath();
     if (!fs.existsSync(p)) throw apiErrors.notFound("Database file");
-    // Flush WAL so the backup file is a consistent snapshot.
     await db.run("PRAGMA wal_checkpoint(FULL)");
     return encryptBackup(p);
   }
 
-  /**
-   * Replace the live DB with a decrypted backup. `confirmPassword` is required
-   * (recovery-code reset is handled by the auth flow; here we need the password).
-   */
   async function restoreBackup(
     userId: string,
     envelope: Buffer,
@@ -117,7 +201,7 @@ export function createBackupService(db: Db = getDb(), dbPathOverride?: string) {
       throw apiErrors.forbidden("Password confirmation failed. Restore aborted.");
     }
 
-    const plaintext = decryptBackup(envelope); // throws 400 on wrong key
+    const plaintext = decryptBackup(envelope);
     if (!plaintext.subarray(0, 16).equals(Buffer.from("SQLite format 3\u0000"))) {
       throw apiErrors.badRequest("Decrypted backup is not a valid SQLite database.");
     }
@@ -125,52 +209,81 @@ export function createBackupService(db: Db = getDb(), dbPathOverride?: string) {
     const p = dbPath();
     const dir = path.dirname(p);
     fs.mkdirSync(dir, { recursive: true });
-
-    // Pre-restore auto-backup (raw file copy — same install, same key).
+    const stagingPath = uniqueSibling(p, "restore-staging");
+    const rollbackPath = uniqueSibling(p, "restore-rollback");
     let preRestoreBackupPath: string | null = null;
-    if (fs.existsSync(p)) {
-      preRestoreBackupPath = path.join(dir, `pre-restore-${Date.now()}.db`);
-      fs.copyFileSync(p, preRestoreBackupPath);
-    }
+    let liveMovedToRollback = false;
+    let stagingActivated = false;
 
-    // Swap the file: close any live handles → write → migrate via a temp connection → reopen.
-    // Close the passed handle too if it's a real SqliteDb (production: same as singleton).
-    const { resetDb, SqliteDb } = await import("@/server/db/adapter");
-    if (db instanceof SqliteDb) {
-      try {
-        db.close();
-      } catch {
-        // already closed
-      }
-    }
-    resetDb();
-    fs.writeFileSync(p, plaintext);
-    // Bring any older backup schema up to date (idempotent; no-op when current).
-    const { createRequire } = await import("node:module");
-    const require = createRequire(import.meta.url);
-    // CJS interop: require() returns `any`, so annotate the bindings (no assertion).
-    // better-sqlite3 exports its constructor; up.js's runMigrations only needs
-    // pragma/exec on the db it receives (extra members on the instance are fine).
-    const Database: new (p: string) => {
-      pragma(s: string): void;
-      exec(s: string): void;
-      close(): void;
-    } = require("better-sqlite3");
-    const { runMigrations }: {
-      runMigrations: (
-        db: { pragma(s: string): void; exec(s: string): void },
-        dir?: string
-      ) => { applied: number; current: number };
-    } = require("../../../migrations/up.js");
-    const temp = new Database(p);
     try {
-      runMigrations(temp);
-    } finally {
-      temp.close();
-    }
-    getDb(); // reopen singleton
+      fs.writeFileSync(stagingPath, plaintext, { flag: "wx", mode: 0o600 });
+      const expectedVersion = validateAndMigrateStaging(stagingPath);
 
-    return { restored: true, preRestoreBackupPath };
+      if (fs.existsSync(p)) {
+        // Make the durable safety artifact encrypted; the plaintext rollback file
+        // exists only during the activation window and is deleted on success.
+        await db.run("PRAGMA wal_checkpoint(FULL)");
+        preRestoreBackupPath = uniqueSibling(p, "pre-restore", ".ofbak");
+        fs.writeFileSync(preRestoreBackupPath, encryptBackup(p), { flag: "wx", mode: 0o600 });
+      }
+
+      const { resetDb, SqliteDb } = await import("@/server/db/adapter");
+      if (usesSingleton) {
+        resetDb();
+      } else if (db instanceof SqliteDb) {
+        try {
+          db.close();
+        } catch {
+          // already closed
+        }
+      }
+      removeSqliteSidecars(p);
+
+      if (fs.existsSync(p)) {
+        fs.renameSync(p, rollbackPath);
+        liveMovedToRollback = true;
+      }
+      fs.renameSync(stagingPath, p);
+      stagingActivated = true;
+
+      try {
+        validateActivatedDatabase(p, expectedVersion);
+        if (usesSingleton) {
+          const reopened = getDb();
+          await reopened.get("SELECT 1 AS ok");
+        }
+      } catch (activationError) {
+        if (usesSingleton) resetDb();
+        removeSqliteSidecars(p);
+        fs.rmSync(p, { force: true });
+        if (liveMovedToRollback && fs.existsSync(rollbackPath)) {
+          fs.renameSync(rollbackPath, p);
+          liveMovedToRollback = false;
+          if (usesSingleton) {
+            const reopenedOriginal = getDb();
+            await reopenedOriginal.get("SELECT 1 AS ok");
+          }
+        }
+        throw activationError;
+      }
+
+      if (liveMovedToRollback) {
+        fs.rmSync(rollbackPath, { force: true });
+        liveMovedToRollback = false;
+      }
+      return { restored: true, preRestoreBackupPath };
+    } catch (error) {
+      if (!stagingActivated) fs.rmSync(stagingPath, { force: true });
+      if (liveMovedToRollback && fs.existsSync(rollbackPath) && !fs.existsSync(p)) {
+        fs.renameSync(rollbackPath, p);
+      }
+      throw error;
+    } finally {
+      fs.rmSync(stagingPath, { force: true });
+      if (!liveMovedToRollback) fs.rmSync(rollbackPath, { force: true });
+      removeSqliteSidecars(stagingPath);
+      removeSqliteSidecars(rollbackPath);
+    }
   }
 
   return { exportBackup, restoreBackup };

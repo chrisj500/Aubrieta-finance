@@ -88,23 +88,17 @@ Required closure:
 - standalone/solo keeps its local update behavior
 - update endpoints remain explicitly classified as user-only/non-agent surfaces
 
-### M5.2 — Restore staging, integrity and encrypted safety backup — high
+### M5.2 — Restore staging, integrity and encrypted safety backup — high — complete
 
-Current gap:
-- the automatic pre-restore safety copy is a raw plaintext `.db`
-- the decrypted candidate is written over the live database before migration/integrity validation finishes
-- a failed migration/open after the swap can leave the live path replaced
-- restore validates the SQLite magic header but does not run `PRAGMA quick_check` before activation
-
-Planned closure:
-- decrypt into a same-directory staging DB
-- run integrity validation before migration
-- migrate staging, then run integrity validation again
-- verify resulting schema version
-- create the durable pre-restore safety artifact as encrypted `.ofbak`
-- swap only after the staged database is proven valid
-- automatically roll back if activation/reopen fails
-- test old-schema restore, corrupted DB rejection and preservation of the original live DB
+Closed:
+- restore decrypts into a unique same-directory staging database rather than overwriting the live path
+- staging runs `PRAGMA quick_check` before migration and again after migration
+- staged restore must reach the repository's current migration/schema version before activation
+- the durable pre-restore safety artifact is an encrypted `.ofbak`, not a plaintext `.db`
+- the live database is closed/safely checkpointed only after staging proves valid
+- activation uses a same-directory rollback file and restores the original database if activation/reopen validation fails
+- staging and temporary rollback plaintext artifacts are removed after success/failure
+- regression coverage proves current restore, encrypted safety backup contents, old-schema migration, corrupt staged DB rejection and preservation of the original live DB
 
 ### M5.3 — Update supply-chain source — high
 
