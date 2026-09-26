@@ -1,5 +1,13 @@
 import { apiErrors } from "@/lib/api-error";
 import type { Db } from "@/server/db/types";
+import {
+  AUBRIETA_APK_ASSET,
+  AUBRIETA_CHECKSUMS_ASSET,
+  AUBRIETA_LATEST_RELEASE_API,
+  AUBRIETA_RELEASE_SOURCE,
+  AUBRIETA_UPDATE_USER_AGENT,
+  isSha256Hex,
+} from "@/lib/update-source";
 
 /**
  * Solo (on-device) update checks — browser-safe twin of the server's
@@ -17,8 +25,6 @@ import type { Db } from "@/server/db/types";
  */
 
 const STATE_PREFIX = "update.";
-const GITHUB_LATEST = "https://api.github.com/repos/DeseretSaint/open-finance/releases/latest";
-
 async function getState(db: Db, key: string): Promise<string | null> {
   const row = await db.get<{ value: string }>("SELECT value FROM app_state WHERE key = ?", STATE_PREFIX + key);
   return row?.value ?? null;
@@ -63,8 +69,8 @@ export function createSoloUpdatesService(db: Db) {
       let apkUrl: string | null = null;
       let apkSha256: string | null = null;
       try {
-        const res = await fetch(GITHUB_LATEST, {
-          headers: { accept: "application/vnd.github+json", "user-agent": "open-finance-updater" },
+        const res = await fetch(AUBRIETA_LATEST_RELEASE_API, {
+          headers: { accept: "application/vnd.github+json", "user-agent": AUBRIETA_UPDATE_USER_AGENT },
           signal: AbortSignal.timeout(10_000),
         });
         if (res.ok) {
@@ -80,16 +86,16 @@ export function createSoloUpdatesService(db: Db) {
           latestVersion = (data.tag_name ?? "").replace(/^v/i, "");
           latestUrl = data.html_url ?? null;
           const assets = data.assets ?? [];
-          const releaseApk = assets.find((a) => a.name === "app-release.apk");
+          const releaseApk = assets.find((a) => a.name === AUBRIETA_APK_ASSET);
           apkUrl = releaseApk?.browser_download_url ?? null;
           if (apkUrl) {
             // Best-effort: fetch the release's SHA256SUMS asset.
             try {
-              const sumsAsset = assets.find((a) => a.name === "SHA256SUMS");
+              const sumsAsset = assets.find((a) => a.name === AUBRIETA_CHECKSUMS_ASSET);
               const sumsUrl = sumsAsset?.browser_download_url;
               if (sumsUrl) {
                 const sumsRes = await fetch(sumsUrl, {
-                  headers: { accept: "application/vnd.github+json", "user-agent": "open-finance-updater" },
+                  headers: { accept: "application/vnd.github+json", "user-agent": AUBRIETA_UPDATE_USER_AGENT },
                   signal: AbortSignal.timeout(8_000),
                 });
                 if (sumsRes.ok) {
@@ -97,7 +103,8 @@ export function createSoloUpdatesService(db: Db) {
                   // The release APK checksum line looks like:
                   //   <64-hex>  ./release/app-release.apk
                   const match = text.match(/([0-9a-f]{64})\s+\S*app-release\.apk/);
-                  apkSha256 = match?.[1]?.toLowerCase() ?? null;
+                  const candidate = match?.[1]?.toLowerCase() ?? null;
+                  apkSha256 = isSha256Hex(candidate) ? candidate : null;
                 }
               }
             } catch {
@@ -138,7 +145,7 @@ export function createSoloUpdatesService(db: Db) {
         dismissed,
         scheduledAt,
         running: running === "1",
-        source: "github-api",
+        source: AUBRIETA_RELEASE_SOURCE,
         canSelfUpdate: false,
         canManageUpdates: true,
       };

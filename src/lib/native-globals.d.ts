@@ -47,7 +47,7 @@ declare global {
   interface OfUpdaterPlugin {
     downloadAndInstall?: (o: {
       url: string;
-      sha256?: string | null;
+      sha256: string;
       fileName?: string;
     }) => Promise<void>;
     canInstallUnknownApps?: () => Promise<{ canInstall: boolean }>;

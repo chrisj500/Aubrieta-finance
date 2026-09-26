@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { apiErrors } from "@/lib/api";
+import { AUBRIETA_LATEST_RELEASE_API, AUBRIETA_RELEASE_SOURCE, AUBRIETA_UPDATE_USER_AGENT } from "@/lib/update-source";
 import { getDb, type Db } from "@/server/db/adapter";
 
 /**
@@ -126,9 +127,9 @@ export function createUpdatesService(db: Db = getDb()) {
           }
         } else {
           // GitHub latest-release API (works once the repo is public).
-          source = "github-api";
-          const res = await fetch("https://api.github.com/repos/DeseretSaint/open-finance/releases/latest", {
-            headers: { accept: "application/vnd.github+json", "user-agent": "open-finance-updater" },
+          source = AUBRIETA_RELEASE_SOURCE;
+          const res = await fetch(AUBRIETA_LATEST_RELEASE_API, {
+            headers: { accept: "application/vnd.github+json", "user-agent": AUBRIETA_UPDATE_USER_AGENT },
             signal: AbortSignal.timeout(10_000),
           });
           if (res.ok) {
@@ -171,7 +172,7 @@ export function createUpdatesService(db: Db = getDb()) {
         dismissed,
         scheduledAt,
         running: running === "1",
-        source: UPDATE_CHECK_URL ? "custom-url" : "github-api",
+        source: UPDATE_CHECK_URL ? "custom-url" : AUBRIETA_RELEASE_SOURCE,
         canSelfUpdate,
       };
     },

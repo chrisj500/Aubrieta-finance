@@ -100,17 +100,17 @@ Closed:
 - staging and temporary rollback plaintext artifacts are removed after success/failure
 - regression coverage proves current restore, encrypted safety backup contents, old-schema migration, corrupt staged DB rejection and preservation of the original live DB
 
-### M5.3 — Update supply-chain source — high
+### M5.3 — Update supply-chain source — high — complete
 
-Current gap:
-- server and solo update checks still reference the historical `DeseretSaint/open-finance` release feed rather than the Aubrieta repository
-- the native updater consumes an APK URL/checksum from that feed (Android signing still provides an additional install boundary)
-
-Planned closure:
-- move the canonical update source to the Aubrieta repository/config
-- require/check release asset checksum for native install
-- make the configured source explicit in diagnostics
-- retain fixed-script host updates; never execute URLs or commands supplied by release metadata
+Closed:
+- hub and standalone update discovery now share one canonical Aubrieta release source: `chrisj500/Aubrieta-finance`
+- the update status reports the explicit source label `github:chrisj500/Aubrieta-finance` (or `custom-url` for an operator override)
+- the native release flow discovers `app-release.apk` plus `SHA256SUMS` from the canonical release
+- native automatic install fails closed unless a valid 64-hex SHA-256 is available
+- the Android updater independently rejects missing/malformed checksums before network download and always verifies the downloaded APK before opening the installer
+- redirect hops remain HTTPS-only and restricted to the existing trusted GitHub release host allowlist
+- the one-line installer now downloads Aubrieta from `chrisj500/Aubrieta-finance` rather than the historical upstream repository
+- the hub still executes only the fixed operator-controlled `UPDATE_SCRIPT`; release metadata cannot select commands or scripts
 
 ### M5.4 — Provider failure isolation regression — medium/high
 

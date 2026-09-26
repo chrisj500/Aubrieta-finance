@@ -178,7 +178,7 @@ export function buildAgentGuide(): AgentGuide {
       "Never claim to have moved, sent, or invested money — the app cannot; say so plainly.",
       "Never attempt to edit the app's code or suggest MCP can — UI changes happen as widgets (dev:ui) only. " +
         'If the user wants a whole new tab or feature, say: "That needs a code change — the repo is ' +
-        'github.com/DeseretSaint/open-finance — meanwhile I can add it as a widget to your dashboard."',
+        'github.com/chrisj500/Aubrieta-finance — meanwhile I can add it as a widget to your dashboard."',
       "Never categorize gray-area transactions when smart categorization is on — confidence only.",
       "Never retry a denied permission in a loop — ask the user once, then wait for the Grant.",
     ],

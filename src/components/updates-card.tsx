@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { hasWindow } from "@/lib/browser-env";
+import { isSha256Hex } from "@/lib/update-source";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,10 @@ export function UpdatesCard() {
       if (st?.latestUrl) window.open(st.latestUrl, "_blank");
       return;
     }
+    if (!isSha256Hex(st.apkSha256)) {
+      setInstallMsg("Verified SHA-256 checksum unavailable — open the release notes and install manually.");
+      return;
+    }
     setInstalling(true);
     setInstallMsg(null);
     try {
@@ -68,8 +73,8 @@ export function UpdatesCard() {
       }
       await plugin.downloadAndInstall({
         url: st.apkUrl,
-        sha256: st.apkSha256 ?? null,
-        fileName: `openfinance-${st.latestVersion}.apk`,
+        sha256: st.apkSha256,
+        fileName: `aubrieta-${st.latestVersion}.apk`,
       });
       setInstallMsg("Downloaded — the installer should open now. Finish it to apply the update.");
     } catch (e) {
@@ -210,7 +215,7 @@ export function UpdatesCard() {
             <Button
               onClick={downloadAndInstall}
               disabled={installing || !s.apkUrl}
-              title={s.apkUrl ? "" : "Checking for the downloadable APK…"}
+              title={s.apkUrl && !isSha256Hex(s.apkSha256) ? "Verified checksum unavailable; use Release notes for manual install." : s.apkUrl ? "" : "Checking for the downloadable APK…"}
             >
               {installing ? "Updating…" : `Update now (v${s.latestVersion})`}
             </Button>
