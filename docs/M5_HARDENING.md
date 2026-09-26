@@ -153,8 +153,17 @@ Implemented:
 - interactive provider enrollment/re-auth remains a human UI prerequisite/path; a re-auth-required connection fails smoke through sync/health and is repaired through the normal provider UI
 - ordinary CI must not invoke the live smoke and the self-hosted runners must not receive production provider secrets
 
+### M5.8 — Session mutation CSRF completeness — medium — complete
+
+Closed:
+- `PUT /api/agent/manual` now enforces the same `x-of-request` CSRF marker as other cookie-authenticated mutations
+- the agent manual remains readable through either the signed-in human session or the existing Bearer-token polling contract; only the human edit path is mutable
+- the mixed-auth route is explicitly documented as user-only for PUT in the route registry
+- regression coverage proves a cross-site-style cookie mutation is rejected without changing the manual and a legitimate CSRF-marked edit still succeeds
+- a source-level guard now fails tests if any API route combines `requireSession` with POST/PATCH/PUT/DELETE but omits `requireCsrf`
+
 Final M5 gate:
-- perform and record at least one successful live-provider run using `docs/PROVIDER_SMOKE.md`; until then the harness is shipped but M5 is not declared complete
+- perform and record at least one successful live-provider run using `docs/PROVIDER_SMOKE.md`; until then the hardening code is complete but M5 is not declared operationally complete
 
 ## Accepted/deferred risks
 

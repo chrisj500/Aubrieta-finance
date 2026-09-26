@@ -112,3 +112,27 @@ describe("CSRF guard on session-cookie mutating routes", () => {
     expect(withCsrf.status).not.toBe(403); // 400/404 — CSRF passed, id resolution runs
   });
 });
+describe("CSRF source coverage", () => {
+  it("requires a CSRF guard in every session-authenticated mutation route", () => {
+    const apiRoot = path.join(process.cwd(), "src/app/api");
+    const routeFiles: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name === "route.ts") routeFiles.push(full);
+      }
+    };
+    walk(apiRoot);
+
+    const mutationExport = /export\s+(?:async\s+)?function\s+(POST|PATCH|PUT|DELETE)\b|export\s+const\s+(POST|PATCH|PUT|DELETE)\b/;
+    const missing = routeFiles
+      .filter((file) => {
+        const src = fs.readFileSync(file, "utf8");
+        return mutationExport.test(src) && src.includes("requireSession") && !src.includes("requireCsrf");
+      })
+      .map((file) => path.relative(process.cwd(), file));
+
+    expect(missing).toEqual([]);
+  });
+});
