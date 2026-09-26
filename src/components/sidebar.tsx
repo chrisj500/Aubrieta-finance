@@ -18,6 +18,7 @@ import {
   Settings,
   Sun,
   Target,
+  TrendingUp,
   Wallet,
   X,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import { useTheme } from "@/components/providers";
 const NAV = [
   { href: "/dashboard", label: "Overview", Icon: LayoutDashboard },
   { href: "/accounts", label: "Accounts", Icon: Wallet },
+  { href: "/investments", label: "Investments", Icon: TrendingUp },
   { href: "/transactions", label: "Transactions", Icon: ArrowLeftRight },
   { href: "/budgets", label: "Budgets", Icon: Target },
   { href: "/plan", label: "Plan", Icon: CalendarClock },
@@ -44,6 +46,7 @@ const TAB_BAR = [
 
 /** Destinations behind the mobile "More" button — everything not on the bar. */
 const MORE_ITEMS = [
+  { href: "/investments", label: "Investments", Icon: TrendingUp, blurb: "Portfolio & holdings" },
   { href: "/plan", label: "Plan", Icon: CalendarClock, blurb: "Bills, debts & goals" },
   { href: "/reports", label: "Reports", Icon: PieChart, blurb: "Trends & projections" },
   { href: "/agents", label: "Agents", Icon: Bot, blurb: "Connect your AI" },
