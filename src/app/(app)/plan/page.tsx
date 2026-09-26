@@ -534,6 +534,7 @@ export default function PlanPage() {
     const focusUntil = iso(addDays(new Date(), 30));
     return all.filter((o) => o.status === "overdue" || (o.status === "upcoming" && o.due_date >= today && o.due_date <= focusUntil));
   }, [occurrences.data?.occurrences, showAllOccurrences]);
+  const focusedBillTotalCents = visibleOccurrences.reduce((sum, o) => sum + o.expected_amount_cents, 0);
 
   const horizonCaption =
     horizon === "paycheck" && manualPayday
@@ -577,8 +578,8 @@ export default function PlanPage() {
         <div className="grid gap-3 sm:grid-cols-3">
           <MetricCard
             label="Due in view"
-            value={<Money cents={digest.data?.totalUpcomingCents ?? 0} />}
-            hint={horizonCaption}
+            value={<Money cents={focusedBillTotalCents} />}
+            hint="next 30 days + overdue"
             icon={<CalendarClock size={17} />}
           />
           <MetricCard

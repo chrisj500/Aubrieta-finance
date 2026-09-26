@@ -14,6 +14,8 @@ describe("M4.3 Bills experience", () => {
   it("puts current bill obligations ahead of longer-range forecasting", () => {
     expect(src).toContain('id="bills-overview-heading"');
     expect(src).toContain('label="Due in view"');
+    expect(src).toContain('value={<Money cents={focusedBillTotalCents} />}');
+    expect(src).toContain('hint="next 30 days + overdue"');
     expect(src).toContain('label="Overdue"');
     expect(src).toContain('label="Active bills"');
     expect(src).toContain('id="planning-ahead-heading"');
