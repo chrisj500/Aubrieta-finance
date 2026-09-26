@@ -8,6 +8,8 @@ import { registerLimiter, sensitiveLimiter } from "@/server/auth/service";
 import { POST as onboardingPost } from "@/app/api/onboarding/route";
 import { POST as registerPost } from "@/app/api/auth/register/route";
 import { POST as updatesPost } from "@/app/api/updates/route";
+import { POST as logoutPost } from "@/app/api/auth/logout/route";
+import { POST as logoutAllPost } from "@/app/api/auth/logout-all/route";
 import { DELETE as sessionDelete } from "@/app/api/auth/sessions/[id]/route";
 
 /**
@@ -76,6 +78,26 @@ describe("CSRF guard on session-cookie mutating routes", () => {
     const cookie = await sessionCookie();
     expect((await updatesPost(jsonReq(`${BASE}/api/updates`, {}, { cookie }))).status).toBe(403);
     // positive path is network-dependent (releases fetch) — covered by gate smoke.
+  });
+
+
+  it("auth/logout POST: 403 without x-of-request, succeeds with it", async () => {
+    const cookie = await sessionCookie();
+    expect((await logoutPost(jsonReq(`${BASE}/api/auth/logout`, {}, { cookie }))).status).toBe(403);
+    expect((await logoutPost(jsonReq(`${BASE}/api/auth/logout`, {}, { cookie, "x-of-request": "1" }))).status).toBe(204);
+  });
+
+  it("auth/logout-all POST: 403 without x-of-request and does not revoke the current session", async () => {
+    const cookie = await sessionCookie();
+    expect((await logoutAllPost(jsonReq(`${BASE}/api/auth/logout-all`, {}, { cookie }))).status).toBe(403);
+
+    const db = getDb();
+    const rawToken = decodeURIComponent(cookie.slice("of_session=".length));
+    const { hashSecret } = await import("@/lib/crypto");
+    expect(await db.get<{ id: string }>("SELECT id FROM sessions WHERE token_hash = ?", hashSecret(rawToken))).toBeTruthy();
+
+    expect((await logoutAllPost(jsonReq(`${BASE}/api/auth/logout-all`, {}, { cookie, "x-of-request": "1" }))).status).toBe(204);
+    expect(await db.get<{ id: string }>("SELECT id FROM sessions WHERE token_hash = ?", hashSecret(rawToken))).toBeUndefined();
   });
 
   it("auth/sessions DELETE: 403 without x-of-request, not 403 with it", async () => {

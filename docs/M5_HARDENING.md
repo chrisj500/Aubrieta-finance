@@ -130,12 +130,16 @@ There is currently no inbound provider webhook endpoint. `WEBHOOK_SECRET` is def
 - raw webhook bodies must not be processed before authenticity is established
 - only then may a provider advertise the `webhooks` capability
 
-### M5.6 — Session / passkey / MFA decision — medium
+### M5.6 — Session / passkey / MFA review — medium — complete
 
-Current password/session behavior is materially hardened. Remaining decision work:
-- document whether passkeys and/or TOTP MFA are required for the target self-hosted threat model
-- if implemented, recovery and session-revocation semantics must be defined first
-- do not weaken the existing password/recovery path simply to add a second mechanism
+Decision and closure for the current deployment model:
+- Aubrieta's supported hub model is private household self-hosting over LAN, Tailscale, or HTTPS rather than a public multi-tenant SaaS login surface
+- the existing password/session path remains the required hub authentication baseline: bcrypt password verification, timing-safe nonexistent-user handling, hashed session tokens, secure-cookie default, absolute/idle expiry, session listing/revocation, rate limits, CSRF, and single-use recovery codes
+- logout and logout-all now enforce the same CSRF header as other cookie-authenticated mutations; logout-all cannot be cross-site-triggered to revoke every session
+- passkeys/WebAuthn and TOTP MFA are not required for M5 completion under this threat model; adding either would introduce credential/challenge schema, recovery, disable/reset, and session-transition semantics that should not be bolted on without a deployment need
+- revisit MFA if Aubrieta is intentionally exposed directly to the public Internet, operated for unrelated/high-risk users, or otherwise moves beyond the current LAN/Tailscale/HTTPS household model
+- if MFA is added later, define recovery and session revocation first; TOTP secrets must be encrypted at rest and replay/rate-limit behavior tested, while WebAuthn must account for stable RP ID/origin requirements across self-hosted hostnames
+- do not weaken or replace the current password/recovery path merely to add a second authentication mechanism
 
 ### M5.7 — Production-provider smoke tests — final M5 gate
 
