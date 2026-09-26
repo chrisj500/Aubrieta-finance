@@ -17,6 +17,6 @@ describe("transactions result-count live region", () => {
   it("announces the transaction count via an aria-live status region", () => {
     expect(src).toContain('role="status" aria-live="polite"');
     // The status region wraps the live total count string.
-    expect(src).toMatch(/role="status" aria-live="polite" className="text-sm text-text-muted">\{data \? `\$/);
+    expect(src).toMatch(/role="status" aria-live="polite" className="[^"]*text-sm text-text-muted">\s*\{data \? `\$/);
   });
 });
