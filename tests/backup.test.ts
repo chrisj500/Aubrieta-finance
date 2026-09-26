@@ -45,6 +45,36 @@ async function fileDb(p: string): Promise<Db> {
   return createDb(p);
 }
 
+async function fileDbAtVersion(p: string, maxVersion: number): Promise<Db> {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const Database = require("better-sqlite3") as new (p: string) => {
+    pragma(s: string): unknown;
+    exec(s: string): void;
+    prepare(s: string): { run(...params: unknown[]): unknown };
+    transaction<T>(fn: () => T): () => T;
+    close(): void;
+  };
+  const raw = new Database(p);
+  const dir = path.join(process.cwd(), "migrations");
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => /^\d+_.*\.sql$/.test(f) && parseInt(f, 10) <= maxVersion)
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+  raw.exec("CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+  for (const file of files) {
+    const version = parseInt(file, 10);
+    const sql = fs.readFileSync(path.join(dir, file), "utf8");
+    raw.transaction(() => {
+      raw.exec(sql);
+      raw.prepare("INSERT INTO _migrations (version, applied_at) VALUES (?, ?)").run(version, new Date().toISOString());
+    })();
+    raw.pragma(`user_version = ${version}`);
+  }
+  raw.close();
+  return createDb(p);
+}
+
 describe("backup", () => {
   it("round-trips a database through the encrypted envelope", async () => {
     const p = tmpDbPath();
@@ -98,16 +128,80 @@ describe("backup", () => {
     const result = await svc.restoreBackup(user.id, envelope, "correct-horse-battery");
     expect(result.restored).toBe(true);
     expect(result.preRestoreBackupPath).toBeTruthy();
+    expect(result.preRestoreBackupPath).toMatch(/\.ofbak$/);
     expect(fs.existsSync(result.preRestoreBackupPath!)).toBe(true);
+    const safetyPlain = decryptBackup(fs.readFileSync(result.preRestoreBackupPath!));
+    const safetyPath = `${tmpDbPath()}-safety.db`;
+    fs.writeFileSync(safetyPath, safetyPlain);
+    const safetyDb = createDb(safetyPath);
+    expect(await safetyDb.get<{ name: string }>("SELECT name FROM budgets WHERE name = 'Before'")).toMatchObject({ name: "Before" });
+    safetyDb.close();
+    fs.rmSync(safetyPath, { force: true });
 
     // the live file now contains the restored data
     const reopened = createDb(p);
     const row = await reopened.get<{ name: string }>("SELECT name FROM budgets WHERE name = 'Restored'");
     expect(row?.name).toBe("Restored");
     reopened.close();
+    if (result.preRestoreBackupPath) fs.rmSync(result.preRestoreBackupPath, { force: true });
     fs.rmSync(p, { force: true });
     fs.rmSync(backupPath, { force: true });
   });
+
+
+  it("migrates a validated old-schema backup before activating it", async () => {
+    const p = tmpDbPath();
+    const db = await fileDb(p);
+    const user = await seedUser(db, "restore-current");
+    await db.run("UPDATE users SET password_hash = ? WHERE id = ?", await hashPassword("restore-old-schema"), user.id);
+    await db.run("INSERT INTO budgets (id, user_id, name, amount_cents, period, created_at) VALUES (?, ?, 'Live', 1, 'monthly', ?)", randomUUID(), user.id, new Date().toISOString());
+
+    const oldPath = tmpDbPath();
+    const oldDb = await fileDbAtVersion(oldPath, 25);
+    const oldUser = await seedUser(oldDb, "legacy-backup");
+    await oldDb.run("INSERT INTO budgets (id, user_id, name, amount_cents, period, created_at) VALUES (?, ?, 'Legacy restored', 2500, 'monthly', ?)", randomUUID(), oldUser.id, new Date().toISOString());
+    (oldDb as unknown as { close(): void }).close();
+    const envelope = encryptBackup(oldPath);
+
+    const result = await createBackupService(db, p).restoreBackup(user.id, envelope, "restore-old-schema");
+    expect(result.restored).toBe(true);
+
+    const reopened = createDb(p);
+    expect(await reopened.get<{ name: string }>("SELECT name FROM budgets WHERE name = 'Legacy restored'")).toMatchObject({ name: "Legacy restored" });
+    expect(await reopened.get<{ user_version: number }>("PRAGMA user_version")).toEqual({ user_version: 28 });
+    expect(await reopened.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='instance_admins'")).toEqual({ name: "instance_admins" });
+    reopened.close();
+
+    if (result.preRestoreBackupPath) fs.rmSync(result.preRestoreBackupPath, { force: true });
+    fs.rmSync(p, { force: true });
+    fs.rmSync(oldPath, { force: true });
+  });
+
+  it("rejects a corrupt staged SQLite database without replacing the live database", async () => {
+    const p = tmpDbPath();
+    const db = await fileDb(p);
+    const user = await seedUser(db, "restore-corrupt");
+    await db.run("UPDATE users SET password_hash = ? WHERE id = ?", await hashPassword("restore-corrupt-pass"), user.id);
+    await db.run("INSERT INTO budgets (id, user_id, name, amount_cents, period, created_at) VALUES (?, ?, 'Keep me', 123, 'monthly', ?)", randomUUID(), user.id, new Date().toISOString());
+    await db.run("PRAGMA wal_checkpoint(FULL)");
+    const before = fs.readFileSync(p);
+
+    const corruptPath = tmpDbPath();
+    const corrupt = Buffer.alloc(4096, 0x5a);
+    Buffer.from("SQLite format 3\u0000").copy(corrupt, 0);
+    fs.writeFileSync(corruptPath, corrupt);
+    const envelope = encryptBackup(corruptPath);
+
+    await expect(createBackupService(db, p).restoreBackup(user.id, envelope, "restore-corrupt-pass")).rejects.toThrow(/integrity|validated|database/i);
+    expect(fs.readFileSync(p).equals(before)).toBe(true);
+    expect(await db.get<{ name: string }>("SELECT name FROM budgets WHERE name = 'Keep me'")).toMatchObject({ name: "Keep me" });
+    expect(fs.readdirSync(path.dirname(p)).filter((name) => name.startsWith("restore-staging-") || name.startsWith("restore-rollback-")).length).toBe(0);
+
+    (db as unknown as { close(): void }).close();
+    fs.rmSync(p, { force: true });
+    fs.rmSync(corruptPath, { force: true });
+  });
+
 });
 
 describe("backup upload size cap", () => {
