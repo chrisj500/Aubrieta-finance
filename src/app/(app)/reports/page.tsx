@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { usePageTitle } from "@/lib/use-page-title";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Activity, ChevronLeft, ChevronRight, CircleDollarSign, Scale, TrendingDown, TrendingUp } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -22,6 +22,8 @@ import {
 } from "recharts";
 import { api } from "@/lib/api-client";
 import { Card, CardLabel, CardTitle } from "@/components/ui/card";
+import { MetricCard } from "@/components/ui/metric-card";
+import { Page, PageHeader } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Money } from "@/components/money";
 import { AgentWidgets } from "@/components/agent-widgets";
@@ -43,6 +45,20 @@ const TOOLTIP_STYLE = {
   color: "var(--foreground)",
   fontSize: 13,
 };
+
+
+function percentChange(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+function deltaLabel(value: number | null, positiveIsGood: boolean): { text: string; tone: "default" | "positive" | "danger" } {
+  if (value === null) return { text: "No comparable prior-period baseline", tone: "default" };
+  if (Math.abs(value) < 0.05) return { text: "Flat vs prior period", tone: "default" };
+  const up = value > 0;
+  const good = positiveIsGood ? up : !up;
+  return { text: `${up ? "Up" : "Down"} ${Math.abs(value).toFixed(1)}% vs prior period`, tone: good ? "positive" : "danger" };
+}
 
 function ChartEmpty({ children }: { children: React.ReactNode }) {
   return (
@@ -106,10 +122,24 @@ export default function ReportsPage() {
   }, [monthOffset]);
 
   const byCategory = useQuery({
-    queryKey: ["reports", "by-category", monthOffset, includePending],
+    queryKey: ["reports", "by-category", monthOffset, includeExcluded, includePending],
     queryFn: () => {
       const from = monthStart(monthOffset);
       const to = monthStart(monthOffset + 1);
+      const p = new URLSearchParams({ from, to });
+      if (includeExcluded) p.set("includeExcluded", "1");
+      if (!includePending) p.set("includePending", "0");
+      return api.get<{ rows: Array<{ categoryName: string; spentCents: number; color: string | null }> }>(
+        `/api/reports/spending-by-category?${p.toString()}`
+      );
+    },
+  });
+
+  const previousByCategory = useQuery({
+    queryKey: ["reports", "by-category-previous", monthOffset, includeExcluded, includePending],
+    queryFn: () => {
+      const from = monthStart(monthOffset - 1);
+      const to = monthStart(monthOffset);
       const p = new URLSearchParams({ from, to });
       if (includeExcluded) p.set("includeExcluded", "1");
       if (!includePending) p.set("includePending", "0");
@@ -133,26 +163,23 @@ export default function ReportsPage() {
   });
 
   const cashflow = useQuery({
-    queryKey: ["reports", "cashflow", monthOffset, includeExcluded, includePending],
+    queryKey: ["reports", "cashflow-trend", trendMonths, includeExcluded, includePending],
     queryFn: () => {
-      // Anchor the six-month chart to the selected month, not whichever clock
-      // the hub/server happens to use. This keeps phone and hub reports aligned.
-      const selectedStart = monthStart(monthOffset);
-      const months = Array.from({ length: 6 }, (_, i) => {
-        const d = new Date(`${selectedStart}T00:00:00Z`);
-        d.setUTCMonth(d.getUTCMonth() - (5 - i));
-        return d.toISOString().slice(0, 7);
-      });
-      const from = `${months[0]}-01`;
-      const d = new Date(`${selectedStart}T00:00:00Z`);
-      d.setUTCMonth(d.getUTCMonth() + 1);
-      const to = d.toISOString().slice(0, 10);
-      const p = new URLSearchParams({ months: "6", from, to });
+      const p = new URLSearchParams({ months: String(trendMonths * 2) });
       if (includeExcluded) p.set("includeExcluded", "1");
       if (!includePending) p.set("includePending", "0");
       return api.get<{ rows: Array<{ month: string; incomeCents: number; expenseCents: number; netCents: number }> }>(
         `/api/reports/cashflow?${p.toString()}`
       );
+    },
+  });
+  const spendingTrend = useQuery({
+    queryKey: ["reports", "spending-trend", trendMonths, includeExcluded, includePending],
+    queryFn: () => {
+      const p = new URLSearchParams({ months: String(trendMonths * 2) });
+      if (includeExcluded) p.set("includeExcluded", "1");
+      if (!includePending) p.set("includePending", "0");
+      return api.get<{ rows: Array<{ month: string; spentCents: number }> }>(`/api/reports/spending-trend?${p.toString()}`);
     },
   });
   const netWorth = useQuery({
@@ -183,13 +210,46 @@ export default function ReportsPage() {
     name: r.categoryName,
     value: r.spentCents,
   }));
-  const barData = (cashflow.data?.rows ?? []).map((r) => ({
+
+  const previousCategoryMap = new Map((previousByCategory.data?.rows ?? []).map((r) => [r.categoryName, r.spentCents]));
+  const currentCategoryMap = new Map((byCategory.data?.rows ?? []).map((r) => [r.categoryName, r.spentCents]));
+  const categoryComparison = Array.from(new Set([...currentCategoryMap.keys(), ...previousCategoryMap.keys()]))
+    .map((name) => {
+      const currentCents = currentCategoryMap.get(name) ?? 0;
+      const previousCents = previousCategoryMap.get(name) ?? 0;
+      return { name, currentCents, previousCents, deltaCents: currentCents - previousCents };
+    })
+    .sort((a, b) => Math.max(b.currentCents, b.previousCents) - Math.max(a.currentCents, a.previousCents))
+    .slice(0, 6);
+
+  const allCashflowRows = cashflow.data?.rows ?? [];
+  const currentCashflowRows = allCashflowRows.slice(-trendMonths);
+  const priorCashflowRows = allCashflowRows.slice(-trendMonths * 2, -trendMonths);
+  const barData = currentCashflowRows.map((r) => ({
     month: new Date(`${r.month}-01T00:00:00`).toLocaleDateString("en-US", { month: "short" }),
     Income: r.incomeCents / 100,
     Expenses: r.expenseCents / 100,
     Net: r.netCents / 100,
   }));
   const hasCashflow = barData.some((r) => r.Income !== 0 || r.Expenses !== 0 || r.Net !== 0);
+
+  const allSpendingRows = spendingTrend.data?.rows ?? [];
+  const currentSpendingRows = allSpendingRows.slice(-trendMonths);
+  const priorSpendingRows = allSpendingRows.slice(-trendMonths * 2, -trendMonths);
+  const spendingData = currentSpendingRows.map((r) => ({
+    month: new Date(`${r.month}-01T00:00:00`).toLocaleDateString("en-US", { month: "short" }),
+    Spending: r.spentCents / 100,
+  }));
+  const hasSpendingTrend = spendingData.some((r) => r.Spending !== 0);
+
+  const currentSpendCents = currentSpendingRows.reduce((sum, r) => sum + r.spentCents, 0);
+  const priorSpendCents = priorSpendingRows.reduce((sum, r) => sum + r.spentCents, 0);
+  const currentNetCents = currentCashflowRows.reduce((sum, r) => sum + r.netCents, 0);
+  const priorNetCents = priorCashflowRows.reduce((sum, r) => sum + r.netCents, 0);
+  const avgMonthlySpendCents = trendMonths > 0 ? Math.round(currentSpendCents / trendMonths) : 0;
+  const priorAvgMonthlySpendCents = trendMonths > 0 ? Math.round(priorSpendCents / trendMonths) : 0;
+  const spendingDelta = deltaLabel(percentChange(avgMonthlySpendCents, priorAvgMonthlySpendCents), false);
+  const cashflowDelta = deltaLabel(percentChange(currentNetCents, priorNetCents), true);
 
   const projData = (projection.data?.points ?? []).map((p) => ({
     month: new Date(`${p.month}-01T00:00:00`).toLocaleDateString("en-US", { month: "short" }),
@@ -202,13 +262,19 @@ export default function ReportsPage() {
     Net: r.netCents / 100,
     Assets: r.assetsCents / 100,
     Liabilities: r.liabilitiesCents / 100,
+    netCents: r.netCents,
   }));
   const hasTrend = trendData.length > 0;
+  const netWorthStartCents = trendData[0]?.netCents ?? null;
+  const netWorthEndCents = trendData.at(-1)?.netCents ?? null;
+  const netWorthChangeCents = netWorthStartCents !== null && netWorthEndCents !== null ? netWorthEndCents - netWorthStartCents : null;
+  const netWorthChangePct = netWorthStartCents !== null && netWorthEndCents !== null ? percentChange(netWorthEndCents, netWorthStartCents) : null;
+  const netWorthDelta = deltaLabel(netWorthChangePct, true);
 
   // Surface fetch failures instead of silently rendering "no data yet" empty
   // states. Gated on !data so a background refetch error never blanks charts
   // that already rendered.
-  const failedQueries = [byCategory, monthSummary, cashflow, netWorth, netWorthTrend, projection].filter(
+  const failedQueries = [byCategory, previousByCategory, monthSummary, cashflow, spendingTrend, netWorth, netWorthTrend, projection].filter(
     (q) => q.isError && !q.data
   );
   const firstFailedError = failedQueries[0]?.error ?? null;
@@ -220,8 +286,11 @@ export default function ReportsPage() {
   const isPast = monthOffset < 0;
 
   return (
-    <div className="space-y-6">
-      <h1 className="sr-only">Reports</h1>
+    <Page>
+      <PageHeader
+        title="Reports"
+        description="Understand how spending, cash flow, categories, and net worth are changing over time."
+      />
       {/* Widgets your AI added (dev:ui) */}
       <AgentWidgets tab="reports" />
 
@@ -238,6 +307,72 @@ export default function ReportsPage() {
           </div>
         </Card>
       )}
+
+      <section aria-labelledby="trends-overview-heading" className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 id="trends-overview-heading" className="text-lg font-semibold text-text">Trends overview</h2>
+            <p className="mt-1 text-sm text-text-muted">Compare the latest {trendMonths} months with the prior {trendMonths}-month period.</p>
+          </div>
+          <div className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-muted p-0.5" role="group" aria-label="Trends range">
+            {[3, 6, 12].map((m) => (
+              <button key={m} type="button" aria-pressed={trendMonths === m} aria-label={`Last ${m} months`} onClick={() => setTrendMonths(m)} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${trendMonths === m ? "bg-accent text-[var(--accent-foreground)]" : "text-text-muted hover:text-text"}`}>
+                {m}m
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MetricCard label="Average monthly spending" value={<Money cents={avgMonthlySpendCents} />} hint={spendingDelta.text} icon={spendingDelta.tone === "positive" ? <TrendingDown size={17} /> : spendingDelta.tone === "danger" ? <TrendingUp size={17} /> : <Activity size={17} />} tone={spendingDelta.tone} />
+          <MetricCard label={`Net cash flow · ${trendMonths}m`} value={<Money cents={currentNetCents} signed />} hint={cashflowDelta.text} icon={<CircleDollarSign size={17} />} tone={currentNetCents < 0 ? "danger" : cashflowDelta.tone} />
+          <MetricCard label={`Net worth change · ${trendMonths}m`} value={netWorthChangeCents === null ? "—" : <Money cents={netWorthChangeCents} signed />} hint={netWorthChangeCents === null ? "Balance history is still building" : netWorthDelta.text} icon={<Scale size={17} />} tone={netWorthChangeCents === null ? "default" : netWorthChangeCents < 0 ? "danger" : "positive"} />
+        </div>
+      </section>
+
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+        <Card>
+          <CardTitle>Spending trend — last {trendMonths} months</CardTitle>
+          <p className="mt-1 text-xs text-text-muted">Monthly spending, compared against the prior {trendMonths}-month period above.</p>
+          {!hasSpendingTrend ? (
+            <ChartEmpty>No spending trend yet — add transactions to start comparing periods.</ChartEmpty>
+          ) : (
+            <div className="mt-4 h-56 sm:h-64" role="img" aria-label={`Spending trend line chart — last ${trendMonths} months`}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={spendingData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fill: "var(--text-muted)", fontSize: 12 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fill: "var(--text-muted)", fontSize: 12 }} tickFormatter={(v: number) => `$${v}`} tickLine={false} axisLine={false} width={60} />
+                  <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} contentStyle={TOOLTIP_STYLE} wrapperStyle={{ pointerEvents: "none" }} />
+                  <Line type="monotone" dataKey="Spending" stroke="var(--accent)" strokeWidth={2.5} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <CardTitle>Cash flow — last {trendMonths} months</CardTitle>
+          <p className="mt-1 text-xs text-text-muted">Income, spending, and the resulting net cash flow by month.</p>
+          {!hasCashflow ? (
+            <ChartEmpty>No cash flow data yet — add transactions to see trends.</ChartEmpty>
+          ) : (
+            <div className="mt-4 h-56 sm:h-64" role="img" aria-label={`Cash flow bar chart — income, expenses, and net for the last ${trendMonths} months`}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fill: "var(--text-muted)", fontSize: 12 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fill: "var(--text-muted)", fontSize: 12 }} tickFormatter={(v: number) => `$${v}`} tickLine={false} axisLine={false} width={50} />
+                  <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} contentStyle={TOOLTIP_STYLE} wrapperStyle={{ pointerEvents: "none" }} cursor={false} />
+                  <Legend wrapperStyle={{ fontSize: 12, color: "var(--text-muted)" }} />
+                  <Bar dataKey="Income" fill="var(--success)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Expenses" fill="var(--chart-6)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Net" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </Card>
+      </div>
 
       {/* Month navigator */}
       <Card>
@@ -354,38 +489,34 @@ export default function ReportsPage() {
         </Card>
 
         <Card>
-          <CardTitle>Cash flow — last 6 months</CardTitle>
-          {!hasCashflow ? (
-            <ChartEmpty>No cash flow data yet — add transactions to see trends.</ChartEmpty>
+          <CardTitle>Category comparison</CardTitle>
+          <p className="mt-1 text-xs text-text-muted">{monthLabel} versus the previous month · top categories by either period.</p>
+          {categoryComparison.length === 0 ? (
+            <ChartEmpty>No category spending to compare yet.</ChartEmpty>
           ) : (
-            <div
-              className="mt-4 h-56 sm:h-64"
-              role="img"
-              aria-label="Cash flow bar chart — income, expenses, and net for the last 6 months"
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={barData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fill: "var(--text-muted)", fontSize: 12 }} tickLine={false} axisLine={false} />
-                  <YAxis
-                    tick={{ fill: "var(--text-muted)", fontSize: 12 }}
-                    tickFormatter={(v: number) => `$${v}`}
-                    tickLine={false}
-                    axisLine={false}
-                    width={50}
-                  />
-                  <Tooltip
-                    formatter={(value) => `$${Number(value).toFixed(2)}`}
-                    contentStyle={TOOLTIP_STYLE}
-                    wrapperStyle={{ pointerEvents: "none" }}
-                    cursor={false}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12, color: "var(--text-muted)" }} />
-                  <Bar dataKey="Income" fill="var(--success)" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Expenses" fill="var(--chart-6)" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Net" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[420px] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-text-muted">
+                    <th className="pb-2 font-medium">Category</th>
+                    <th className="pb-2 text-right font-medium">This month</th>
+                    <th className="pb-2 text-right font-medium">Prior</th>
+                    <th className="pb-2 text-right font-medium">Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {categoryComparison.map((row) => (
+                    <tr key={row.name} className="border-b border-border/70 last:border-0">
+                      <td className="py-2.5 font-medium text-text">{row.name}</td>
+                      <td className="py-2.5 text-right text-text"><Money cents={row.currentCents} /></td>
+                      <td className="py-2.5 text-right text-text-muted"><Money cents={row.previousCents} /></td>
+                      <td className={`py-2.5 text-right font-medium ${row.deltaCents > 0 ? "text-danger" : row.deltaCents < 0 ? "text-success" : "text-text-muted"}`}>
+                        <Money cents={row.deltaCents} signed />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </Card>
@@ -474,28 +605,9 @@ export default function ReportsPage() {
 
       {/* Net worth trend — daily balance history */}
       <Card>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <CardTitle>Net worth trend</CardTitle>
-          <div
-            className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-muted p-0.5"
-            role="group"
-            aria-label="Net worth trend range"
-          >
-            {[3, 6, 12].map((m) => (
-              <button
-                key={m}
-                type="button"
-                aria-pressed={trendMonths === m}
-                aria-label={`Last ${m} months`}
-                onClick={() => setTrendMonths(m)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  trendMonths === m ? "bg-accent text-[var(--accent-foreground)]" : "text-text-muted hover:text-text"
-                }`}
-              >
-                {m}m
-              </button>
-            ))}
-          </div>
+        <div className="mb-2">
+          <CardTitle>Net worth trend — last {trendMonths} months</CardTitle>
+          <p className="mt-1 text-xs text-text-muted">Assets, liabilities, and net worth from account balance history.</p>
         </div>
         {!hasTrend ? (
           <ChartEmpty>No balance history yet — sync a bank or add an account to start tracking.</ChartEmpty>
@@ -537,6 +649,6 @@ export default function ReportsPage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }
