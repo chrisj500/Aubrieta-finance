@@ -75,7 +75,7 @@ export function UpdateBanner() {
       if (plugin.canInstallUnknownApps) {
         const perm = await plugin.canInstallUnknownApps();
         if (!perm.canInstall && plugin.openInstallSettings) {
-          setInstallMsg("Allow Open Finance to install apps, then tap Update again.");
+          setInstallMsg("Allow Aubrieta to install apps, then tap Update again.");
           await plugin.openInstallSettings();
           setInstalling(false);
           return;
@@ -166,7 +166,7 @@ export function UpdateBanner() {
     <div className="fixed inset-x-0 top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
       <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm">
         <span>
-          Open Finance <span className="font-medium">v{s.latestVersion}</span> is available (you&apos;re on v
+          Aubrieta <span className="font-medium">v{s.latestVersion}</span> is available (you&apos;re on v
           {s.currentVersion}).
         </span>
         <div className="flex items-center gap-2">
