@@ -18,6 +18,7 @@ interface UpdateStatus {
   running: boolean;
   source: string;
   canSelfUpdate: boolean;
+  canManageUpdates: boolean;
 }
 
 function isNativeApp(): boolean {
@@ -95,7 +96,7 @@ export function UpdateBanner() {
   }
 
   const s = status.data;
-  if (!s || (!s.updateAvailable && !s.scheduledAt && !s.running)) return null;
+  if (!s || !s.canManageUpdates || (!s.updateAvailable && !s.scheduledAt && !s.running)) return null;
 
   // scheduling flow: pick a time (default 3am), then confirm
   if (scheduledFor !== null) {

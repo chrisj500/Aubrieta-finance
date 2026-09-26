@@ -51,6 +51,7 @@ export interface SoloUpdateStatus {
   running: boolean;
   source: string;
   canSelfUpdate: false;
+  canManageUpdates: true;
 }
 
 export function createSoloUpdatesService(db: Db) {
@@ -139,6 +140,7 @@ export function createSoloUpdatesService(db: Db) {
         running: running === "1",
         source: "github-api",
         canSelfUpdate: false,
+        canManageUpdates: true,
       };
     },
 

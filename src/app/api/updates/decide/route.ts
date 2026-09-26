@@ -4,6 +4,7 @@ import { apiErrors, ok, parseBody, route } from "@/lib/api";
 import { requireCsrf, requireSession } from "@/server/auth/service";
 import { createUpdatesService, upcomingThreeAm } from "@/server/domain/updates";
 import { getDb } from "@/server/db/adapter";
+import { requireInstanceAdmin } from "@/server/authz/instance-admin";
 
 export const runtime = "nodejs";
 
@@ -22,8 +23,9 @@ const decideSchema = z.object({
  */
 export async function POST(req: NextRequest) {
   return route(async (req) => {
-    await requireSession(req);
+    const session = await requireSession(req);
     requireCsrf(req);
+    await requireInstanceAdmin(getDb(), session.userId);
     const body = await parseBody(decideSchema, req);
     const svc = createUpdatesService(getDb());
 

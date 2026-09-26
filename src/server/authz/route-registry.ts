@@ -76,6 +76,8 @@ export const USER_ONLY_ROUTES: string[] = [
   "/api/export",
   "/api/backup",
   "/api/backup/restore",
+  "/api/updates",
+  "/api/updates/*",
   "/api/accounts(POST/PATCH/DELETE)",
   "/api/transactions(POST/DELETE)",
 ];

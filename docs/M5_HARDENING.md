@@ -1,0 +1,154 @@
+# M5 Hardening Inventory & Threat Model
+
+Status: active. M5 starts from the shipped M4 baseline; hardening should close demonstrated gaps without redesigning working product architecture.
+
+## Assets and trust boundaries
+
+Highest-value assets:
+- household financial data and transaction history
+- provider credentials/access tokens
+- user passwords, recovery codes, sessions, agent tokens and pairing codes
+- the instance encryption key and encrypted backup material
+- instance-administrator capabilities
+- the host update mechanism
+
+Primary trust boundaries:
+- browser/app session -> Aubrieta API
+- agent Bearer token -> scoped agent API/MCP surface
+- one household -> another household on the same instance
+- Aubrieta -> aggregation providers/OAuth enrollment flows
+- paired phone -> hub session
+- encrypted backup file -> live SQLite database
+- release/update source -> host-level update script
+
+The persistent GitHub Actions runners are a separate infrastructure boundary. Runner network hardening remains intentionally deferred and must not block application M5 work; external-fork code stays off the self-hosted runners.
+
+## Existing controls verified in the M5 inventory
+
+### Authentication and sessions
+- password hashes use the existing password service; login performs a dummy bcrypt verify for unknown users to reduce username timing disclosure
+- raw session tokens are shown only to the client and SHA-256 hashed at rest
+- sessions support absolute expiry plus a 90-day idle cap for `forever`
+- last-seen writes and purge bookkeeping are memory-bounded
+- secure cookies are the default; plain HTTP cookies require explicit development opt-in
+- password changes revoke other sessions
+- recovery codes are single-use
+
+### CSRF and rate limiting
+- cookie-authenticated mutations use `x-of-request: 1` CSRF enforcement
+- login/register/recovery/password/pairing/bootstrap/demo and agent detection have route-level rate-limit coverage
+- rate-limit maps are hard-capped against high-cardinality memory exhaustion
+- current limiter is process-local by design and is acceptable only while Aubrieta remains a single-process/self-hosted deployment
+
+### Data encryption and backups
+- provider credentials and connection secrets use AES-256-GCM with record-bound AAD
+- downloaded whole-instance `.ofbak` backups use AES-256-GCM authenticated encryption
+- whole-instance backup/restore is restricted to instance administrators
+- restore requires session + CSRF + password confirmation and caps upload size
+- backup tampering/wrong-key input is rejected
+
+### Provider enrollment and sync
+- Teller enrollment uses a one-time nonce plus signature verification
+- Akoya OAuth state is persisted, time-limited and single-use
+- provider connection secrets are encrypted at rest
+- provider sync validates tenant scope before writing
+- optional liabilities/investments/recurring refreshes fail soft and keep the last known snapshot
+- connection failures are recorded instead of silently presented as successful
+- no provider currently advertises the `webhooks` capability and there is no inbound provider webhook route
+
+### Multi-household and agents
+- instance administration is separate from household membership
+- users remain limited to one household
+- provider connections carry explicit household tenant scope
+- cross-household finance/agent isolation has regression coverage
+- agent tokens are hashed at rest, revocable/expirable, scope-bound and intersected with current user access caps
+- account allowlists constrain agent data access
+- host/admin/auth/backup/household surfaces are not agent APIs
+
+### Device lock and pairing
+- pairing codes are random, hashed at rest, single-use, TTL-bound, rate-limited and atomically claimed
+- device PINs use salted PBKDF2-SHA256 with timing-safe verification
+- repeated PIN failures cause exponential lockout
+- PIN/biometric configuration cannot be changed to bypass an active lockout
+
+### Browser/server response hardening
+- CSP, frame denial, MIME sniffing protection, referrer policy, permissions policy and HSTS are configured
+- API responses are `Cache-Control: no-store`
+
+## M5 gap sequence
+
+### M5.1 — Instance update authorization — critical
+
+Finding: update state is hub-wide and `action: now` executes a fixed host script, but `/api/updates` and `/api/updates/decide` previously required only an ordinary user session. Any household user on a multi-household instance could therefore check/mutate global update state and trigger host-level update execution.
+
+Required closure:
+- all server-side update mutations require instance-administrator authorization
+- status explicitly reports whether the signed-in user may manage instance updates
+- non-admin users do not receive host update action UI
+- standalone/solo keeps its local update behavior
+- update endpoints remain explicitly classified as user-only/non-agent surfaces
+
+### M5.2 — Restore staging, integrity and encrypted safety backup — high
+
+Current gap:
+- the automatic pre-restore safety copy is a raw plaintext `.db`
+- the decrypted candidate is written over the live database before migration/integrity validation finishes
+- a failed migration/open after the swap can leave the live path replaced
+- restore validates the SQLite magic header but does not run `PRAGMA quick_check` before activation
+
+Planned closure:
+- decrypt into a same-directory staging DB
+- run integrity validation before migration
+- migrate staging, then run integrity validation again
+- verify resulting schema version
+- create the durable pre-restore safety artifact as encrypted `.ofbak`
+- swap only after the staged database is proven valid
+- automatically roll back if activation/reopen fails
+- test old-schema restore, corrupted DB rejection and preservation of the original live DB
+
+### M5.3 — Update supply-chain source — high
+
+Current gap:
+- server and solo update checks still reference the historical `DeseretSaint/open-finance` release feed rather than the Aubrieta repository
+- the native updater consumes an APK URL/checksum from that feed (Android signing still provides an additional install boundary)
+
+Planned closure:
+- move the canonical update source to the Aubrieta repository/config
+- require/check release asset checksum for native install
+- make the configured source explicit in diagnostics
+- retain fixed-script host updates; never execute URLs or commands supplied by release metadata
+
+### M5.4 — Provider failure isolation regression — medium/high
+
+Existing behavior is mostly fail-soft, but route-level integration coverage should prove:
+- one failed provider does not prevent other provider results from returning
+- optional capability failures preserve prior liabilities/holdings/recurring data
+- a failed connection records error state without corrupting another connection
+- provider tenant mismatch always fails closed
+
+### M5.5 — Webhook authenticity gate — deferred until webhooks exist
+
+There is currently no inbound provider webhook endpoint. `WEBHOOK_SECRET` is defined but unused. Before the first webhook receiver ships:
+- provider-specific signature/JWT verification must be implemented
+- replay/timestamp protections must be tested where the provider supports them
+- raw webhook bodies must not be processed before authenticity is established
+- only then may a provider advertise the `webhooks` capability
+
+### M5.6 — Session / passkey / MFA decision — medium
+
+Current password/session behavior is materially hardened. Remaining decision work:
+- document whether passkeys and/or TOTP MFA are required for the target self-hosted threat model
+- if implemented, recovery and session-revocation semantics must be defined first
+- do not weaken the existing password/recovery path simply to add a second mechanism
+
+### M5.7 — Production-provider smoke tests — final M5 gate
+
+Create opt-in/environment-gated smoke procedures for configured real providers. They must not run in ordinary CI or require production secrets on the self-hosted runners. Minimum vertical smoke:
+connect -> sync accounts/transactions -> liabilities where supported -> connection health -> resync/re-auth path.
+
+## Accepted/deferred risks
+
+- Process-local rate limiting resets on restart and would not coordinate across multiple app processes. Revisit only if Aubrieta becomes horizontally scaled.
+- CSP still requires inline allowances for the current Next/UI build. Tightening this is desirable but should be handled as a tested compatibility slice, not a blind header change.
+- Self-hosted CI runner network segmentation is intentionally deferred by the operator; same-repo-only runner routing remains mandatory until then.
+- Household-level export/restore remains a later feature; whole-instance backup stays instance-admin-only.
