@@ -12,6 +12,8 @@ import { usePathname } from "next/navigation";
 const APP_SHELL_PATHS = [
   "/dashboard",
   "/accounts",
+  "/account",
+  "/investments",
   "/transactions",
   "/budgets",
   "/plan",
