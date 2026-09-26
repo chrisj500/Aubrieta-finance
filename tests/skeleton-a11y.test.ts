@@ -10,7 +10,7 @@ const read = (p: string) => readFileSync(join(root, p), "utf8");
 // silent, unexplained empty space. Mirrors the a11y parity work in runs 182/184/187.
 describe("skeleton loaders announce loading state", () => {
   const cases: Array<[string, string, string]> = [
-    ["dashboard", "src/app/(app)/dashboard/page.tsx", "Loading your dashboard"],
+    ["overview", "src/app/(app)/dashboard/page.tsx", "Loading your overview"],
     ["transactions", "src/app/(app)/transactions/page.tsx", "Loading your transactions"],
     ["accounts", "src/app/(app)/accounts/page.tsx", "Loading your accounts"],
     ["budgets", "src/app/(app)/budgets/page.tsx", "Loading your budgets"],
