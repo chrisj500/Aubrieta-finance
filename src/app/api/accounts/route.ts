@@ -17,6 +17,7 @@ const createSchema = z.object({
   currentBalanceCents: z.number().int().nullable().optional(),
   availableBalanceCents: z.number().int().nullable().optional(),
   currency: z.string().optional(),
+  visibility: z.enum(["shared", "private"]).optional(),
 });
 
 /** Accounts — user session, or agent token scoped by read:banking/read:investments + allowlist. */
