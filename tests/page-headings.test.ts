@@ -9,7 +9,7 @@ const read = (p: string) => readFileSync(join(root, p), "utf8");
 // users hear the current section name. The app-shell header <h1> shows the user's
 // display name on every route, so these sr-only page headings are what actually
 // announce the current section, including the visible Overview heading.
-// (accounts + agents already have visible headings; remaining legacy pages keep sr-only headings for now.)
+// (accounts + agents already have visible headings; M4 is migrating the remaining legacy pages as each experience is refreshed.)
 describe("main pages expose a per-page heading", () => {
   it("overview page has a visible page heading", () => {
     const src = read("src/app/(app)/dashboard/page.tsx");
@@ -21,10 +21,14 @@ describe("main pages expose a per-page heading", () => {
     expect(src).toContain('title="Transactions"');
   });
 
+  it("plan page has a visible page heading", () => {
+    const src = read("src/app/(app)/plan/page.tsx");
+    expect(src).toContain('title="Plan"');
+  });
+
   const cases: Array<[string, string]> = [
     ["budgets", "src/app/(app)/budgets/page.tsx"],
     ["reports", "src/app/(app)/reports/page.tsx"],
-    ["plan", "src/app/(app)/plan/page.tsx"],
     ["settings", "src/app/(app)/settings/page.tsx"],
   ];
   for (const [name, file] of cases) {
