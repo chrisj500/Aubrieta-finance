@@ -59,7 +59,7 @@ export function UpdatesCard() {
       if (plugin.canInstallUnknownApps) {
         const perm = await plugin.canInstallUnknownApps();
         if (!perm.canInstall && plugin.openInstallSettings) {
-          setInstallMsg("Allow Open Finance to install apps, then tap Update again.");
+          setInstallMsg("Allow Aubrieta to install apps, then tap Update again.");
           await plugin.openInstallSettings();
           setInstalling(false);
           return;
