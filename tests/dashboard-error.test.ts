@@ -13,7 +13,7 @@ describe("dashboard summary fetch error handling", () => {
       /const \{ data, isLoading, error, refetch, isFetching \} = useQuery\(\{\s*queryKey: \["summary", includePending\]/
     );
     // a dedicated error branch (only when there is no data to show) renders an alert + retry
-    expect(src).toContain('Couldn&apos;t load your dashboard');
+    expect(src).toContain('Couldn&apos;t load your overview');
     expect(src).toContain('role="alert"');
     // retry button wired to refetch() and disabled while fetching
     expect(src).toContain("onClick={() => refetch()}");
