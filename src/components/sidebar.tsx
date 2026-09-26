@@ -190,7 +190,7 @@ export function Sidebar() {
             onClick={() => setMoreOpen(false)}
           />
           <div
-            className="absolute inset-x-0 bottom-0 mx-auto max-w-[640px] rounded-t-[28px] border-t border-border bg-surface px-5 pb-6 pt-3 shadow-[0_-8px_32px_rgb(0_0_0/0.18)]"
+            className="absolute inset-x-0 bottom-0 mx-auto max-h-[calc(100dvh-0.5rem)] max-w-[640px] overflow-y-auto overscroll-contain rounded-t-[28px] border-t border-border bg-surface px-5 pb-6 pt-3 shadow-[0_-8px_32px_rgb(0_0_0/0.18)]"
             style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1.5rem)" }}
           >
             <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-border" aria-hidden />

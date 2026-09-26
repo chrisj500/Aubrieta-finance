@@ -1575,7 +1575,7 @@ function AgentWiringCard({ setMsg, setErr }: { setMsg: (s: string | null) => voi
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs text-text-muted">Connection address</label>
-              <code className="block rounded-md bg-surface-muted px-3 py-2 text-sm text-accent-text">
+              <code className="block break-all rounded-md bg-surface-muted px-3 py-2 text-sm text-accent-text">
                 {endpoint}/api/mcp
               </code>
             </div>
@@ -1600,7 +1600,7 @@ function AgentWiringCard({ setMsg, setErr }: { setMsg: (s: string | null) => voi
           </div>
           <details className="mt-3 rounded-lg border border-border px-4 py-3 text-xs text-text-muted">
             <summary className="cursor-pointer font-medium text-text">Technical details</summary>
-            <div className="mt-2 space-y-1.5 font-mono">
+            <div className="mt-2 min-w-0 space-y-1.5 break-all font-mono">
               <p>MCP (Streamable HTTP): <span className="text-accent-text">{endpoint}/api/mcp</span></p>
               <p>MCP (stdio): <span className="text-accent-text">node scripts/mcp-cli.mjs --url {endpoint} --token &lt;key&gt;</span></p>
               <p>REST: <span className="text-accent-text">GET {endpoint}/api/agent/summary</span> (Bearer)</p>

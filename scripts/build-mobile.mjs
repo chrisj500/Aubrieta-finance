@@ -6,11 +6,13 @@
  * refuses to build with route handlers present. The webview doesn't need the
  * HTTP routes (the solo router answers /api/* in-process), so this script:
  *
- *   1. Temporarily moves src/app/api aside (the export build then has zero
- *      route handlers).
+ *   1. Temporarily moves server-only routes aside: src/app/api, the MCP
+ *      route handler, and /accounts/[id] (arbitrary runtime ids cannot be
+ *      pre-rendered by Next static export).
  *   2. Builds with `MOBILE_EXPORT=1` → next.config switches to
- *      `output: "export"` + `distDir: "dist/mobile"`.
- *   3. Restores src/app/api (finally).
+ *      `output: "export"` + `distDir: "dist/mobile"`. Account detail stays
+ *      available through the static /account?id=… route.
+ *   3. Restores every server-only route (finally).
  *
  * Usage: node scripts/build-mobile.mjs   (run AFTER `pnpm build`)
  */
@@ -28,6 +30,9 @@ const API_BAK = path.join(root, "scripts", ".api-mobile-bak");
 // Server-only proxy route that re-exports from src/app/api — also hidden.
 const MCP_ROUTE = path.join(root, "src", "app", "mcp", "route.ts");
 const MCP_ROUTE_BAK = path.join(root, "src", "app", "mcp", ".route.ts-mobile-bak");
+// Server-only pretty URL. The static export uses /account?id=… instead.
+const ACCOUNT_DETAIL_DIR = path.join(root, "src", "app", "(app)", "accounts", "[id]");
+const ACCOUNT_DETAIL_BAK = path.join(root, "scripts", ".account-detail-mobile-bak");
 
 function hideApi() {
   if (fs.existsSync(API_DIR) && !fs.existsSync(API_BAK)) {
@@ -37,6 +42,10 @@ function hideApi() {
   if (fs.existsSync(MCP_ROUTE) && !fs.existsSync(MCP_ROUTE_BAK)) {
     fs.renameSync(MCP_ROUTE, MCP_ROUTE_BAK);
     console.log("src/app/mcp/route.ts hidden (server-only MCP proxy)");
+  }
+  if (fs.existsSync(ACCOUNT_DETAIL_DIR) && !fs.existsSync(ACCOUNT_DETAIL_BAK)) {
+    fs.renameSync(ACCOUNT_DETAIL_DIR, ACCOUNT_DETAIL_BAK);
+    console.log("src/app/(app)/accounts/[id] hidden (static export uses /account?id=...)");
   }
 }
 
@@ -49,11 +58,15 @@ function restoreApi() {
     fs.renameSync(MCP_ROUTE_BAK, MCP_ROUTE);
     console.log("src/app/mcp/route.ts restored");
   }
+  if (fs.existsSync(ACCOUNT_DETAIL_BAK) && !fs.existsSync(ACCOUNT_DETAIL_DIR)) {
+    fs.renameSync(ACCOUNT_DETAIL_BAK, ACCOUNT_DETAIL_DIR);
+    console.log("src/app/(app)/accounts/[id] restored");
+  }
 }
 
 try {
   hideApi();
-  execSync("pnpm build", {
+  execSync("npm run build", {
     cwd: root,
     stdio: "inherit",
     env: { ...process.env, MOBILE_EXPORT: "1" },

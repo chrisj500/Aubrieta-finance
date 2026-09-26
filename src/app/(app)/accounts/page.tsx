@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { CreditCard, Landmark, PiggyBank, TrendingUp, Wallet, CircleHelp, X, ChevronUp, ChevronDown, Pencil, RotateCcw } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { accountDetailHref } from "@/lib/account-detail-href";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -294,7 +295,7 @@ export default function AccountsPage() {
                       ) : (
                         <div className="flex min-w-0 items-center gap-1.5">
                           <Link
-                            href={`/accounts/${a.id}`}
+                            href={accountDetailHref(a.id)}
                             className="block min-w-0 truncate text-left text-base font-semibold text-text hover:text-accent-text"
                           >
                             {a.name}
