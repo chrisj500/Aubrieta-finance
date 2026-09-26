@@ -1,6 +1,7 @@
 import { getDb, type Db } from "@/server/db/registry";
 import { addMonthsISO, monthlyEquivalent, monthsBetween, todayISO } from "@/server/domain/dates";
 import { createPlanningService } from "@/server/domain/planning";
+import { accountReadScope } from "@/server/authz/household-access";
 
 /**
  * 12-month projection per master plan §8.
@@ -47,14 +48,16 @@ export function createProjectionService(db: Db = getDb()) {
       const today = todayISO();
       const currentMonthStart = today.slice(0, 8) + "01";
       const planning = createPlanningService(db);
+      const accountScope = await accountReadScope(db, userId, "accounts");
+      const txnScope = await accountReadScope(db, userId, "a");
 
       // Baseline: current total balance across all accounts (allowlist-aware from P7).
       const pendingClause = includePending
         ? " + COALESCE((SELECT SUM(t.amount_cents) FROM transactions t WHERE t.account_id = accounts.id AND t.pending = 1 AND t.exclude_from_budgets = 0 AND t.is_transfer = 0), 0)"
         : "";
       const total = await db.get<{ s: number }>(
-        `SELECT COALESCE(SUM(CASE WHEN type IN ('credit', 'loan') THEN -ABS(COALESCE(current_balance_cents, 0)) ELSE COALESCE(current_balance_cents, 0) END${pendingClause}), 0) AS s FROM accounts WHERE user_id = ? AND hidden = 0 AND deleted_at IS NULL AND include_in_net_worth = 1`,
-        userId
+        `SELECT COALESCE(SUM(CASE WHEN type IN ('credit', 'loan') THEN -ABS(COALESCE(current_balance_cents, 0)) ELSE COALESCE(current_balance_cents, 0) END${pendingClause}), 0) AS s FROM accounts WHERE ${accountScope.clause} AND hidden = 0 AND deleted_at IS NULL AND include_in_net_worth = 1`,
+        ...accountScope.params,
       );
       const baselineCents = total?.s ?? 0;
 
@@ -71,9 +74,9 @@ export function createProjectionService(db: Db = getDb()) {
              FROM transactions t
              JOIN accounts a ON a.id = t.account_id
              LEFT JOIN categories c ON c.id = t.user_category_id
-            WHERE a.user_id = ? AND a.deleted_at IS NULL AND t.is_transfer = 0 AND t.amount_cents > 0 AND t.date >= ? AND t.date < ?
+            WHERE ${txnScope.clause} AND a.deleted_at IS NULL AND t.is_transfer = 0 AND t.amount_cents > 0 AND t.date >= ? AND t.date < ?
               ${includePending ? "" : "AND t.pending = 0"} AND c.name = 'Income'`,
-          userId,
+          ...txnScope.params,
           r.start,
           r.end
         );
