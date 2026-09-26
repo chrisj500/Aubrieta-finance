@@ -78,6 +78,7 @@ export const USER_ONLY_ROUTES: string[] = [
   "/api/backup/restore",
   "/api/updates",
   "/api/updates/*",
+  "/api/agent/manual(PUT)",
   "/api/accounts(POST/PATCH/DELETE)",
   "/api/transactions(POST/DELETE)",
 ];

@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import { GET } from "@/app/api/agent/manual/route";
+import { GET, PUT } from "@/app/api/agent/manual/route";
 import { createSession } from "@/server/auth/sessions";
 import { createAgentTokenService } from "@/server/authz/tokens";
 import { createAgentManualService } from "@/server/domain/agent-manual";
@@ -61,5 +61,32 @@ describe("agent manual GET dual authentication", () => {
   it("still rejects a request with neither a session nor a Bearer token", async () => {
     const res = await GET(new NextRequest("http://localhost/api/agent/manual"));
     expect(res.status).toBe(401);
+  });
+});
+
+describe("agent manual PUT CSRF", () => {
+  it("rejects a session-cookie mutation without x-of-request and preserves the manual", async () => {
+    const { db, userId, cookie } = await setup();
+    const before = await createAgentManualService(db).get(userId);
+    const res = await PUT(new NextRequest("http://localhost/api/agent/manual", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ general: "Cross-site overwrite" }),
+    }), { params: Promise.resolve({}) });
+    expect(res.status).toBe(403);
+    const after = await createAgentManualService(db).get(userId);
+    expect(after.general).toBe(before.general);
+  });
+
+  it("still lets the signed-in human update the manual with the CSRF marker", async () => {
+    const { cookie } = await setup();
+    const res = await PUT(new NextRequest("http://localhost/api/agent/manual", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json", "x-of-request": "1" },
+      body: JSON.stringify({ general: "Updated by the signed-in user." }),
+    }), { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { manual: { general: string } };
+    expect(body.manual.general).toBe("Updated by the signed-in user.");
   });
 });

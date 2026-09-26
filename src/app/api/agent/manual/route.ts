@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { apiErrors, ok, parseBody, route } from "@/lib/api";
-import { requireSession } from "@/server/auth/service";
+import { requireCsrf, requireSession } from "@/server/auth/service";
 import { agentRoute, bearerToken } from "@/server/authz/agent-auth";
 import { createAgentTokenService } from "@/server/authz/tokens";
 import { createAgentManualService } from "@/server/domain/agent-manual";
@@ -54,6 +54,7 @@ export async function GET(req: NextRequest) {
 /** PUT /api/agent/manual — user edits their AI steering guidance (user session only). */
 export const PUT = route(async (req: NextRequest) => {
   const session = await requireSession(req);
+  requireCsrf(req);
   const body = await parseBody(schema, req);
   const manual = await createAgentManualService(getDb()).update(session.userId, body);
   return ok({ manual });
