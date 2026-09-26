@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     }
     return ok({
       openapi: "3.1.0",
-      info: { title: "Open Finance Agent API", version: "0.0.1" },
+      info: { title: "Aubrieta Agent API", version: "0.0.1" },
       servers: [{ url: "/" }],
       paths,
     });
