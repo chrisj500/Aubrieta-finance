@@ -19,6 +19,7 @@ export const AGENT_ROUTES: RouteEntry[] = [
   { method: "GET", path: "/api/agent/summary", scopes: ["read:summary"] },
   { method: "GET", path: "/api/accounts", scopes: ["read:banking", "read:investments"] },
   { method: "GET", path: "/api/accounts/:id", scopes: ["read:banking", "read:investments"] },
+  { method: "GET", path: "/api/investments", scopes: ["read:investments"] },
   { method: "GET", path: "/api/transactions", scopes: ["read:banking", "read:investments"] },
   { method: "GET", path: "/api/transactions/:id", scopes: ["read:banking", "read:investments"] },
   { method: "PATCH", path: "/api/transactions/:id", scopes: ["transactions:edit"] },
