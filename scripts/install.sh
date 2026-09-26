@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Open Finance — one-line desktop installer (macOS / Linux)
+# Aubrieta Finance — one-line desktop installer (macOS / Linux)
 #
-#   curl -fsSL https://raw.githubusercontent.com/DeseretSaint/open-finance/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/chrisj500/Aubrieta-finance/main/scripts/install.sh | bash
 #
 # Downloads the latest main, installs dependencies, builds, and starts the
 # app at http://localhost:3000 (open your browser there). Data lives in a
@@ -16,9 +16,9 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "→ Installing Open Finance to ${DIR} …"
+echo "→ Installing Aubrieta Finance to ${DIR} …"
 mkdir -p "$DIR"
-curl -fsSL "https://github.com/DeseretSaint/open-finance/archive/refs/heads/main.tar.gz" \
+curl -fsSL "https://github.com/chrisj500/Aubrieta-finance/archive/refs/heads/main.tar.gz" \
   | tar -xz --strip-components=1 -C "$DIR"
 
 cd "$DIR"
@@ -33,7 +33,7 @@ node migrations/up.js
 mkdir -p data
 
 echo ""
-echo "✅ Open Finance is ready → http://localhost:${PORT}"
+echo "✅ Aubrieta Finance is ready → http://localhost:${PORT}"
 echo "   (Ctrl+C stops it; run the same command again to update & restart)"
 echo ""
 export NODE_ENV=production

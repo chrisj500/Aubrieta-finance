@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { hasWindow } from "@/lib/browser-env";
+import { isSha256Hex } from "@/lib/update-source";
 import { Button } from "@/components/ui/button";
 
 interface UpdateStatus {
@@ -70,6 +71,10 @@ export function UpdateBanner() {
       if (s?.latestUrl) window.open(s.latestUrl, "_blank");
       return;
     }
+    if (!isSha256Hex(s.apkSha256)) {
+      setInstallMsg("Verified SHA-256 checksum unavailable — open the release notes and install manually.");
+      return;
+    }
     setInstalling(true);
     setInstallMsg(null);
     try {
@@ -84,8 +89,8 @@ export function UpdateBanner() {
       }
       await plugin.downloadAndInstall({
         url: s.apkUrl,
-        sha256: s.apkSha256 ?? null,
-        fileName: `openfinance-${s.latestVersion}.apk`,
+        sha256: s.apkSha256,
+        fileName: `aubrieta-${s.latestVersion}.apk`,
       });
       setInstallMsg("Downloaded — the installer should open now. Finish it to apply the update.");
     } catch (e) {

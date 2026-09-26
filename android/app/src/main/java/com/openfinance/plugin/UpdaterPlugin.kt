@@ -43,7 +43,7 @@ class UpdaterPlugin : Plugin() {
     /**
      * Download an APK from `url` into the app's cache dir, verify `sha256`
      * (hex), then launch the system installer on the content URI.
-     * Options: { url, sha256?, fileName? }
+     * Options: { url, sha256, fileName? }
      *
      * SECURITY: every URL (initial and each redirect hop) must be https and
      * its host must be on the trusted release host allowlist (GitHub releases
@@ -52,11 +52,9 @@ class UpdaterPlugin : Plugin() {
      * the download to an untrusted host. GitHub's release download URLs 302 to
      * a CDN host (release-assets.githubusercontent.com / objects…), which is on
      * the allowlist. The `sha256` is verified against the value supplied here —
-     * it is provided by the same release metadata that supplied the URL, so it
-     * guards against corruption/transposition, not against a fully malicious
-     * endpoint that also ships a matching hash. The trusted source of both the
-     * URL and hash is the app's own update check (api.github.com, or a
-     * deploy-controlled UPDATE_CHECK_URL), never an arbitrary caller.
+     * it is required by this plugin and supplied by Aubrieta's canonical GitHub
+     * release metadata. Missing or malformed checksums fail closed before any
+     * network download is attempted.
      */
     private val trustedHosts = setOf(
         "github.com",
@@ -76,7 +74,7 @@ class UpdaterPlugin : Plugin() {
         var current = url
         var hops = 0
         while (true) {
-            val req = Request.Builder().url(current).header("User-Agent", "open-finance-updater").build()
+            val req = Request.Builder().url(current).header("User-Agent", "aubrieta-updater").build()
             val resp = client.newCall(req).execute()
             if (resp.isRedirect && hops < MAX_REDIRECTS) {
                 val location = resp.header("Location")
@@ -108,8 +106,11 @@ class UpdaterPlugin : Plugin() {
             call.reject("url is required")
             return
         }
-        val expectedSha = call.getString("sha256")?.lowercase()?.takeIf { it.length == 64 }
-        val fileName = call.getString("fileName") ?: "openfinance-update.apk"
+        val expectedSha = call.getString("sha256")?.lowercase()?.takeIf { it.matches(Regex("^[0-9a-f]{64}$")) } ?: run {
+            call.reject("A valid SHA-256 checksum is required for native updates.")
+            return
+        }
+        val fileName = call.getString("fileName") ?: "aubrieta-update.apk"
 
         // Validate the URL before any network use.
         val uri = try {
@@ -144,13 +145,11 @@ class UpdaterPlugin : Plugin() {
                             input.copyTo(out)
                         }
                     }
-                    if (expectedSha != null) {
-                        val actual = sha256(apkFile)
-                        if (!actual.equals(expectedSha, ignoreCase = true)) {
-                            apkFile.delete()
-                            call.reject("Checksum mismatch — expected $expectedSha, got $actual")
-                            return@Thread
-                        }
+                    val actual = sha256(apkFile)
+                    if (!actual.equals(expectedSha, ignoreCase = true)) {
+                        apkFile.delete()
+                        call.reject("Checksum mismatch — expected $expectedSha, got $actual")
+                        return@Thread
                     }
                     val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", apkFile)
                     launchInstaller(ctx, uri)
