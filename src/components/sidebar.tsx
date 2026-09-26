@@ -25,7 +25,7 @@ import { api } from "@/lib/api-client";
 import { useTheme } from "@/components/providers";
 
 const NAV = [
-  { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
+  { href: "/dashboard", label: "Overview", Icon: LayoutDashboard },
   { href: "/accounts", label: "Accounts", Icon: Wallet },
   { href: "/transactions", label: "Transactions", Icon: ArrowLeftRight },
   { href: "/budgets", label: "Budgets", Icon: Target },
@@ -96,7 +96,7 @@ export function Sidebar() {
       <aside className="hidden h-full w-60 flex-col border-r border-border bg-surface md:flex">
         <div className="flex items-center gap-2.5 px-5 py-5">
           <LogoMark size={32} />
-          <span className="truncate font-semibold text-text">Open Finance</span>
+          <span className="truncate font-semibold text-text">Aubrieta</span>
         </div>
         <nav className="flex-1 space-y-0.5 px-3 py-2" aria-label="Primary">
           {NAV.map(({ href, label, Icon }) => {

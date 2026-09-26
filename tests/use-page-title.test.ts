@@ -6,7 +6,7 @@ const ROOT = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
 const PAGES: Array<[string, string]> = [
-  ["src/app/(app)/dashboard/page.tsx", "Dashboard"],
+  ["src/app/(app)/dashboard/page.tsx", "Overview"],
   ["src/app/(app)/accounts/page.tsx", "Accounts"],
   ["src/app/(app)/transactions/page.tsx", "Transactions"],
   ["src/app/(app)/budgets/page.tsx", "Budgets"],

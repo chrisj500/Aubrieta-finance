@@ -3,7 +3,7 @@ import Link from "next/link";
 import { WifiOff } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Offline — Open Finance",
+  title: "Offline — Aubrieta",
 };
 
 /**
@@ -18,7 +18,7 @@ export default function OfflinePage() {
         <WifiOff className="mx-auto h-10 w-10 text-text-muted" aria-hidden="true" />
         <h1 className="mt-4 text-lg font-semibold text-text">You&apos;re offline</h1>
         <p className="mt-2 text-sm text-text-muted">
-          Open Finance can&apos;t reach the server right now. Pages you&apos;ve
+          Aubrieta can&apos;t reach the server right now. Pages you&apos;ve
           visited before will still load — check your connection and try again.
         </p>
         <Link

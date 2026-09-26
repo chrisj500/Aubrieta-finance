@@ -1,6 +1,6 @@
 ---
 version: alpha
-name: Open Finance — Calm Fintech
+name: Aubrieta — Calm Fintech
 description: Warm paper surfaces, one accent doing all the work, generous whitespace, precise financial calm.
 colors:
   primary: "#10B981"

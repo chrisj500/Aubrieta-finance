@@ -160,7 +160,7 @@ function HermesSetupCard({ endpoint, solo, setMsg, setErr }: { endpoint: string;
         <div className="min-w-0 flex-1">
           <CardTitle>Connect to Hermes</CardTitle>
           <p className="mt-1 text-sm text-text-muted">
-            Run Hermes on your hub or Mac, where its model provider is configured. Open Finance stays the private finance
+            Run Hermes on your hub or Mac, where its model provider is configured. Aubrieta stays the private finance
             tool server; no provider API key is stored on this phone.
           </p>
         </div>
@@ -170,7 +170,7 @@ function HermesSetupCard({ endpoint, solo, setMsg, setErr }: { endpoint: string;
           <p className="text-sm text-text">
             This phone runs standalone mode. Hermes itself still runs on your hub or Mac — but it connects{" "}
             <strong className="text-text">directly to this phone over Tailscale</strong> (port 8787), so no separate
-            Open Finance install on the hub is needed.
+            Aubrieta install on the hub is needed.
           </p>
           <p className="mt-2 text-xs text-text-muted">
             Turn on Direct remote access below, then use the handoff brief to point your agent at this phone.
@@ -222,7 +222,7 @@ function HermesSetupCard({ endpoint, solo, setMsg, setErr }: { endpoint: string;
           <ol className="list-inside list-decimal space-y-1 text-xs text-text-muted">
             <li>Paste the YAML into Hermes&apos; config and restart Hermes.</li>
             <li>Keep the endpoint private with Tailscale when connecting away from home.</li>
-            <li>Ask Hermes to read your Open Finance summary; it will start read-only.</li>
+            <li>Ask Hermes to read your Aubrieta summary; it will start read-only.</li>
           </ol>
         </div>
       )}
@@ -258,35 +258,35 @@ function RemoteAgentBriefCard({ endpoint, solo }: { endpoint: string; solo: bool
   const target = solo ? "" : endpoint.replace(/\/$/, "");
   const authLine = remoteEnabled
     ? "Authenticate every request with the HTTP header:\n   Authorization: Bearer <the remote-access token shown when you enabled Direct remote access — copy it from the Agents tab, it is displayed once>"
-    : "Authenticate every request with the HTTP header: Authorization: Bearer <access token from the Open Finance Agents page>";
+    : "Authenticate every request with the HTTP header: Authorization: Bearer <access token from the Aubrieta Agents page>";
   const brief = solo
-    ? `Open Finance remote agent connection request
+    ? `Aubrieta remote agent connection request
 
 You are my finance agent running on my trusted agent hub (Hermes on my hub computer or Mac).
 
-Connect DIRECTLY to my Open Finance phone over Tailscale. The phone runs Open Finance itself — there is no separate Open Finance install on a hub to find.
+Connect DIRECTLY to my Aubrieta phone over Tailscale. The phone runs Aubrieta itself — there is no separate Aubrieta install on a hub to find.
 
 1. Reach the phone at its Tailscale address on port 8787 (find the phone in your Tailscale device list, or ask me to confirm its address). Example base: http://<phone-tailscale-address>:8787
 2. ${authLine}
-3. The phone answers the standard Open Finance REST API: GET /api/summary, GET /api/accounts, GET /api/transactions, GET /api/budgets, GET /api/categories, GET /api/reports/*.
+3. The phone answers the standard Aubrieta REST API: GET /api/summary, GET /api/accounts, GET /api/transactions, GET /api/budgets, GET /api/categories, GET /api/reports/*.
 4. Start read-only: fetch the summary and account list, and confirm what you can see before acting. Ask before any write (categories, budgets, transactions).
 5. Gateway: ${gateway} · dedicated chat/topic: ${chat || "[SET CHAT OR TOPIC ID]"} · model preference: ${model} (change it in Hermes on the hub).
-6. Keep provider credentials in Hermes on the hub — never store them in Open Finance, on the phone, or in this chat. The phone stores no provider API keys.`
-    : `Open Finance remote agent connection request
+6. Keep provider credentials in Hermes on the hub — never store them in Aubrieta, on the phone, or in this chat. The phone stores no provider API keys.`
+    : `Aubrieta remote agent connection request
 
 You are my finance agent running on my trusted Hermes hub.
 
-Open Finance MCP endpoint: ${target}/api/mcp
+Aubrieta MCP endpoint: ${target}/api/mcp
 Gateway: ${gateway}
 Dedicated gateway chat/topic: ${chat || "[SET CHAT OR TOPIC ID]"}
 Model preference: ${model}
 
 Complete this setup on the trusted hub:
-1. Use the hub MCP endpoint above with the Open Finance bearer token I provide separately. Never ask me to paste a provider API key into Open Finance, the phone, or this chat.
+1. Use the hub MCP endpoint above with the Aubrieta bearer token I provide separately. Never ask me to paste a provider API key into Aubrieta, the phone, or this chat.
 2. Fetch ${target}/api/agent/guide and call get_capabilities first.
-3. Keep access bounded by the current Open Finance Settings; begin read-only and ask before any write.
+3. Keep access bounded by the current Aubrieta Settings; begin read-only and ask before any write.
 4. Configure the gateway to route this dedicated chat/topic (${chat || "the ID I provide"}) to this Hermes session.
-5. If I requested a model change, change the model in Hermes on the hub. Do not store provider credentials in Open Finance or on the phone.
+5. If I requested a model change, change the model in Hermes on the hub. Do not store provider credentials in Aubrieta or on the phone.
 6. Confirm the connection with a read-only financial summary and do not modify data.`;
   async function copy() {
     try { await navigator.clipboard.writeText(brief); setCopied(true); window.setTimeout(() => setCopied(false), 2200); } catch { /* select manually */ }
@@ -297,13 +297,13 @@ Complete this setup on the trusted hub:
       {solo ? (
         <p className="mt-1 text-sm text-text-muted">
           Copy this token-free brief and send it through the gateway chat you choose. Your agent connects{" "}
-          <strong className="text-text">directly to this phone over Tailscale</strong> (port 8787) — no Open Finance
+          <strong className="text-text">directly to this phone over Tailscale</strong> (port 8787) — no Aubrieta
           install on a hub is needed.
         </p>
       ) : (
         <p className="mt-1 text-sm text-text-muted">
           Copy this token-free brief and send it through the gateway chat you choose. It points your agent at this
-          hub&apos;s Open Finance MCP endpoint.
+          hub&apos;s Aubrieta MCP endpoint.
         </p>
       )}
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -320,7 +320,7 @@ Complete this setup on the trusted hub:
             ) : remoteEnabled ? (
               <>
                 Remote access is <span className="font-medium text-text">on</span>, but the server{" "}
-                <span className="font-medium text-text">isn&apos;t listening yet</span>. Keep the Open Finance app open
+                <span className="font-medium text-text">isn&apos;t listening yet</span>. Keep the Aubrieta app open
                 on this page — it starts on launch and on Enable.
               </>
             ) : (
@@ -424,7 +424,7 @@ function RemoteAccessCard() {
       <CardTitle>Direct remote access (Tailscale)</CardTitle>
       <p className="mt-1 text-sm text-text-muted">
         Lets your agent hub connect <strong className="text-text">directly to this phone</strong> over Tailscale on port
-        8787 — the phone itself serves Open Finance, no hub install required. Requests must present the bearer token.
+        8787 — the phone itself serves Aubrieta, no hub install required. Requests must present the bearer token.
         A foreground service keeps the server reachable even when the app is backgrounded or the screen is off.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -668,7 +668,7 @@ export default function AgentsPage() {
                 <div className="inline">
                   <strong className="text-text">Install Tailscale on this phone</strong> and on your agent hub (your
                   computer or Mac). The phone then has a private Tailscale address — that is the endpoint your agent
-                  reaches. No Open Finance install on the hub is needed; this phone serves Open Finance itself.
+                  reaches. No Aubrieta install on the hub is needed; this phone serves Aubrieta itself.
                 </div>
               </li>
               <li>
@@ -847,7 +847,7 @@ export default function AgentsPage() {
                   <p className="font-medium text-text">Hermes recommended setup</p>
                   <p className="mt-1">
                     Run Hermes on your hub/Mac and configure its model provider there (Nous Portal, OpenAI-compatible,
-                    Ollama, or another supported provider). Add this MCP endpoint and the Open Finance token to Hermes.
+                    Ollama, or another supported provider). Add this MCP endpoint and the Aubrieta token to Hermes.
                     The phone never needs the model provider key.
                   </p>
                 </div>

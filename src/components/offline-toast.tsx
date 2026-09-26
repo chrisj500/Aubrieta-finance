@@ -31,7 +31,7 @@ export function useOnline(): boolean {
 
 export function OfflineToast() {
   const online = useOnline();
-  // Solo mode (the phone IS the Open Finance server): there is no hub to
+  // Solo mode (the phone IS the Aubrieta server): there is no hub to
   // connect to, and navigator.onLine reflects the WebView's network — which
   // can be false (e.g. Tailscale-only, airplane-mode WiFi toggles) while the
   // app is fully writable. Only connected mode is read-only offline.

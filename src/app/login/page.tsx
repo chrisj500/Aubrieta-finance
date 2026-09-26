@@ -59,7 +59,7 @@ export default function LoginPage() {
     setBioBusy(true);
     try {
       const { authenticateBiometric } = await import("@/lib/biometric");
-      const ok = await authenticateBiometric("Unlock Open Finance");
+      const ok = await authenticateBiometric("Unlock Aubrieta");
       if (!ok) return; // cancelled → stay on PIN
       await api.post("/api/device-lock/biometric");
       router.push("/dashboard");
@@ -129,7 +129,7 @@ export default function LoginPage() {
           <div className="mx-auto mb-3 w-fit">
             <LogoMark size={48} />
           </div>
-          <h1 className="text-2xl font-bold text-text">Open Finance</h1>
+          <h1 className="text-2xl font-bold text-text">Aubrieta</h1>
           <p className="mt-1 text-sm text-text-muted">
             {solo ? "This phone is your wallet. Data stays on-device." : "Self-hosted. Your data, your machine."}
           </p>

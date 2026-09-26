@@ -63,7 +63,7 @@ export function DeviceLockGate({ children }: { children: React.ReactNode }) {
     setBioBusy(true);
     try {
       const { authenticateBiometric } = await import("@/lib/biometric");
-      const ok = await authenticateBiometric("Unlock Open Finance");
+      const ok = await authenticateBiometric("Unlock Aubrieta");
       if (!ok) return; // cancelled → stay on the PIN pad
       await api.post("/api/device-lock/biometric");
       qc.invalidateQueries({ queryKey: ["device-lock"] });
