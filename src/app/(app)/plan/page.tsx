@@ -6,7 +6,7 @@ import { useEscapeToClose } from "@/lib/use-escape-to-close";
 import { useDialogA11y } from "@/lib/use-dialog-a11y";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
-import { CalendarClock, CalendarDays, CircleAlert, ReceiptText, X } from "lucide-react";
+import { CalendarClock, CalendarDays, CircleAlert, CircleCheck, Gauge, Pencil, PiggyBank, ReceiptText, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Page, PageHeader } from "@/components/ui/page";
@@ -144,6 +144,13 @@ function addDays(d: Date, n: number): Date {
   const out = new Date(d);
   out.setDate(out.getDate() + n);
   return out;
+}
+
+function goalNeedsPace(g: Goal, today: string): boolean {
+  if (g.current_cents >= g.target_cents || !g.target_date) return false;
+  if (g.target_date < today) return true;
+  if (g.requiredMonthlyCents === null) return true;
+  return (g.monthly_contribution_cents ?? 0) < g.requiredMonthlyCents;
 }
 
 function billSourceLabel(b: Pick<Bill, "source" | "source_confidence" | "user_overridden">): string {
@@ -425,7 +432,19 @@ export default function PlanPage() {
   const [goalContribution, setGoalContribution] = useState("");
   const [goalDate, setGoalDate] = useState("");
   const [goalError, setGoalError] = useState<string | null>(null);
+  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
   const goalTargetError = positiveAmountError(goalTarget);
+
+  function resetGoalForm() {
+    setGoalName("");
+    setGoalTarget("");
+    setGoalCurrent("");
+    setGoalContribution("");
+    setGoalDate("");
+    setGoalError(null);
+    setEditingGoalId(null);
+  }
+
   const createGoal = useMutation({
     mutationFn: () =>
       api.post("/api/planning/goals", {
@@ -434,21 +453,50 @@ export default function PlanPage() {
         targetCents: Math.round(Number(goalTarget) * 100),
         currentCents: Math.round((Number(goalCurrent) || 0) * 100),
         monthlyContributionCents: goalContribution ? Math.round(Number(goalContribution) * 100) : null,
+        contributionMode: goalContribution ? "interval" : "none",
+        contributionInterval: goalContribution ? "monthly" : null,
         targetDate: goalDate || null,
       }),
     onSuccess: () => {
-      setGoalName("");
-      setGoalTarget("");
-      setGoalCurrent("");
-      setGoalContribution("");
-      setGoalDate("");
-      setGoalError(null);
+      resetGoalForm();
       setShowAdd(false);
       setAddKind(null);
       invalidate();
     },
     onError: (e) => setGoalError(e instanceof Error ? e.message : "Failed to create goal."),
   });
+
+  const updateGoal = useMutation({
+    mutationFn: () =>
+      api.patch(`/api/planning/goals/${editingGoalId}`, {
+        name: goalName,
+        targetCents: Math.round(Number(goalTarget) * 100),
+        currentCents: Math.round((Number(goalCurrent) || 0) * 100),
+        monthlyContributionCents: goalContribution ? Math.round(Number(goalContribution) * 100) : null,
+        contributionMode: goalContribution ? "interval" : "none",
+        contributionInterval: goalContribution ? "monthly" : null,
+        targetDate: goalDate || null,
+      }),
+    onSuccess: () => {
+      resetGoalForm();
+      setShowAdd(false);
+      setAddKind(null);
+      invalidate();
+    },
+    onError: (e) => setGoalError(e instanceof Error ? e.message : "Failed to update goal."),
+  });
+
+  function openEditGoal(g: Goal) {
+    setGoalName(g.name);
+    setGoalTarget((g.target_cents / 100).toFixed(2));
+    setGoalCurrent((g.current_cents / 100).toFixed(2));
+    setGoalContribution(g.monthly_contribution_cents ? (g.monthly_contribution_cents / 100).toFixed(2) : "");
+    setGoalDate(g.target_date ?? "");
+    setGoalError(null);
+    setEditingGoalId(g.id);
+    setAddKind("goal");
+    setShowAdd(true);
+  }
 
   // ── Upcoming expense form (one-off bill with an optional set-aside plan) ──
   const [expName, setExpName] = useState("");
@@ -535,6 +583,28 @@ export default function PlanPage() {
     return all.filter((o) => o.status === "overdue" || (o.status === "upcoming" && o.due_date >= today && o.due_date <= focusUntil));
   }, [occurrences.data?.occurrences, showAllOccurrences]);
   const focusedBillTotalCents = visibleOccurrences.reduce((sum, o) => sum + o.expected_amount_cents, 0);
+  const savingsGoals = (goals.data?.goals ?? []).filter((g) => g.type !== "expense");
+  const goalToday = iso(new Date());
+  const goalSummary = savingsGoals.reduce(
+    (acc, g) => {
+      acc.targetCents += g.target_cents;
+      acc.savedCents += Math.min(g.current_cents, g.target_cents);
+      const complete = g.current_cents >= g.target_cents;
+      if (complete) acc.completeCount += 1;
+      else if (goalNeedsPace(g, goalToday)) acc.attentionCount += 1;
+      return acc;
+    },
+    { targetCents: 0, savedCents: 0, completeCount: 0, attentionCount: 0 },
+  );
+  const goalRemainingCents = Math.max(0, goalSummary.targetCents - goalSummary.savedCents);
+  const orderedSavingsGoals = [...savingsGoals].sort((a, b) => {
+    const rank = (g: Goal) => {
+      if (g.current_cents >= g.target_cents) return 0;
+      if (goalNeedsPace(g, goalToday)) return 2;
+      return 1;
+    };
+    return rank(b) - rank(a) || (a.target_date ?? "9999-12-31").localeCompare(b.target_date ?? "9999-12-31") || a.name.localeCompare(b.name);
+  });
 
   const horizonCaption =
     horizon === "paycheck" && manualPayday
@@ -1065,49 +1135,138 @@ export default function PlanPage() {
       </Card>
 
       {/* Goals */}
+      <section aria-labelledby="goals-overview-heading" className="space-y-4">
+        <div>
+          <h2 id="goals-overview-heading" className="text-lg font-semibold text-text">Goals</h2>
+          <p className="mt-1 text-sm text-text-muted">See what you have saved, what remains, and which goals need a pace adjustment.</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MetricCard
+            label="Saved toward goals"
+            value={<Money cents={goalSummary.savedCents} />}
+            hint={`${goalSummary.completeCount} complete · ${savingsGoals.length} total`}
+            icon={<PiggyBank size={17} />}
+            tone={goalSummary.completeCount > 0 ? "positive" : "default"}
+          />
+          <MetricCard
+            label="Remaining to targets"
+            value={<Money cents={goalRemainingCents} />}
+            hint={goalSummary.targetCents > 0 ? `Across ${savingsGoals.length} savings ${savingsGoals.length === 1 ? "goal" : "goals"}` : "Add a savings goal to get started"}
+            icon={<Gauge size={17} />}
+          />
+          <MetricCard
+            label="Needs pace adjustment"
+            value={goalSummary.attentionCount}
+            hint={goalSummary.attentionCount === 0 ? "Dated goals are on pace" : "Current monthly saving is below target pace"}
+            icon={goalSummary.attentionCount > 0 ? <CircleAlert size={17} /> : <CircleCheck size={17} />}
+            tone={goalSummary.attentionCount > 0 ? "danger" : "positive"}
+          />
+        </div>
+      </section>
+
       <Card>
-        <CardTitle>Goals</CardTitle>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle>Savings goals</CardTitle>
+            <p className="mt-1 text-xs text-text-muted">Goals that need a pace adjustment appear first; completed goals stay visible.</p>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              resetGoalForm();
+              setAddKind("goal");
+              setShowAdd(true);
+            }}
+          >
+            Add goal
+          </Button>
+        </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {(goals.data?.goals ?? []).filter((g) => g.type !== "expense").map((g) => (
-            <div key={g.id} className="rounded-lg border border-border p-3">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="font-medium text-text">{g.name}</p>
-                  <p className="text-xs text-text-muted">
-                    <Money cents={g.current_cents} /> of <Money cents={g.target_cents} />
-                    {g.target_date ? ` · by ${g.target_date}` : ""}
-                  </p>
+          {orderedSavingsGoals.map((g) => {
+            const complete = g.current_cents >= g.target_cents;
+            const needsPace = goalNeedsPace(g, goalToday);
+            const remainingCents = Math.max(0, g.target_cents - g.current_cents);
+            return (
+              <div key={g.id} className={`rounded-lg border p-3 ${needsPace ? "border-danger/40 bg-[var(--danger-soft)]" : complete ? "border-success/30 bg-[var(--success-soft)]" : "border-border"}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate font-medium text-text">{g.name}</p>
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${complete ? "bg-success/10 text-success" : needsPace ? "bg-danger/10 text-danger" : "bg-surface-muted text-text-muted"}`}>
+                        {complete ? "Complete" : needsPace ? "Adjust pace" : g.target_date ? "On pace" : "No target date"}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-text-muted">
+                      <Money cents={g.current_cents} /> of <Money cents={g.target_cents} />
+                      {g.target_date ? ` · by ${g.target_date}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openEditGoal(g)}
+                      className="rounded-md p-1.5 text-text-muted hover:bg-surface-muted hover:text-text"
+                      aria-label={`Edit goal ${g.name}`}
+                      title="Edit goal"
+                    >
+                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeGoal.mutate(g)}
+                      className="rounded-md p-1.5 text-text-muted hover:bg-surface-muted hover:text-danger"
+                      aria-label={`Delete goal ${g.name}`}
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => removeGoal.mutate(g)}
-                  className="text-text-muted hover:text-danger"
-                  aria-label={`Delete goal ${g.name}`}
-                >
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              </div>
-              <div className="mt-3">
-                <Progress value={g.pct} label={`${g.name} goal progress`} />
-              </div>
-              <p className="mt-2 text-xs text-text-muted">
-                {g.requiredMonthlyCents !== null && (
-                  <>
-                    Need <Money cents={g.requiredMonthlyCents} />/mo to hit target
-                  </>
+                <div className="mt-3">
+                  <Progress value={Math.min(1, g.pct)} label={`${g.name} goal progress`} />
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="text-text-muted">Remaining</p>
+                    <p className="font-medium text-text"><Money cents={remainingCents} /></p>
+                  </div>
+                  <div>
+                    <p className="text-text-muted">Monthly pace</p>
+                    <p className={needsPace ? "font-medium text-danger" : "font-medium text-text"}>
+                      {complete ? "Done" : g.requiredMonthlyCents !== null ? <><Money cents={g.requiredMonthlyCents} /> needed</> : "No deadline"}
+                    </p>
+                  </div>
+                </div>
+                {!complete && (g.monthly_contribution_cents ?? 0) > 0 && (
+                  <p className="mt-2 text-xs text-text-muted">
+                    Saving <Money cents={g.monthly_contribution_cents ?? 0} />/mo
+                    {g.projectedCompletionDate ? ` · projected ${g.projectedCompletionDate}` : ""}
+                  </p>
                 )}
-                {g.monthly_contribution_cents !== null && g.monthly_contribution_cents > 0 && (
-                  <>
-                    {g.requiredMonthlyCents !== null && " · "}
-                    Saving <Money cents={g.monthly_contribution_cents} />/mo
-                    {g.projectedCompletionDate ? ` → ${g.projectedCompletionDate}` : ""}
-                  </>
+                {needsPace && g.requiredMonthlyCents !== null && (
+                  <p className="mt-1 text-xs font-medium text-danger">
+                    Increase monthly saving by <Money cents={Math.max(0, g.requiredMonthlyCents - (g.monthly_contribution_cents ?? 0))} /> to match the target pace.
+                  </p>
                 )}
-                {g.requiredMonthlyCents === null && (g.monthly_contribution_cents === null || g.monthly_contribution_cents === 0) && "No target date set"}
-              </p>
+              </div>
+            );
+          })}
+          {orderedSavingsGoals.length === 0 && (
+            <div className="sm:col-span-2 lg:col-span-3 rounded-xl border border-dashed border-border p-6 text-center">
+              <p className="text-sm font-medium text-text">No savings goals yet</p>
+              <p className="mt-1 text-xs text-text-muted">Add an emergency fund, trip, down payment, or any target you want to track.</p>
+              <Button
+                size="sm"
+                className="mt-3"
+                onClick={() => {
+                  resetGoalForm();
+                  setAddKind("goal");
+                  setShowAdd(true);
+                }}
+              >
+                Add your first goal
+              </Button>
             </div>
-          ))}
-          {(goals.data?.goals ?? []).filter((g) => g.type !== "expense").length === 0 && (
-            <p className="text-sm text-text-muted">No goals yet — add one with the + button (savings goal).</p>
           )}
         </div>
       </Card>
@@ -1171,7 +1330,7 @@ export default function PlanPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAddKind("goal")}
+                  onClick={() => { resetGoalForm(); setAddKind("goal"); }}
                   className="flex items-center justify-between rounded-xl border border-border px-4 py-3 text-left text-sm transition-colors hover:border-accent/50 hover:bg-surface-muted"
                 >
                   <span className="font-medium text-text">Savings goal</span>
@@ -1301,7 +1460,8 @@ export default function PlanPage() {
                 className="flex flex-col gap-4"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  createGoal.mutate();
+                  if (editingGoalId) updateGoal.mutate();
+                  else createGoal.mutate();
                 }}
               >
                 <div>
@@ -1348,8 +1508,8 @@ export default function PlanPage() {
                   <CustomDatePicker ariaLabel="Goal target date" value={goalDate} onChange={setGoalDate} />
                 </div>
                 {goalError && <p className="text-sm text-danger">{goalError}</p>}
-                <Button type="submit" disabled={createGoal.isPending || !goalName || !goalTarget || !!goalTargetError}>
-                  {createGoal.isPending ? "Adding…" : "Add goal"}
+                <Button type="submit" disabled={createGoal.isPending || updateGoal.isPending || !goalName || !goalTarget || !!goalTargetError}>
+                  {createGoal.isPending || updateGoal.isPending ? (editingGoalId ? "Saving…" : "Adding…") : editingGoalId ? "Save goal" : "Add goal"}
                 </Button>
                 </form>
                 )}

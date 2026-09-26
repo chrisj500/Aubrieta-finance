@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingDown, TrendingUp, Wallet, Scale, Settings2, ChevronUp, ChevronDown, EyeOff, Eye, RotateCcw, CalendarClock, AlertTriangle } from "lucide-react";
+import { TrendingDown, TrendingUp, Wallet, Scale, Settings2, ChevronUp, ChevronDown, EyeOff, Eye, RotateCcw, CalendarClock, AlertTriangle, Target } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardLabel, CardTitle } from "@/components/ui/card";
 import { MetricCard } from "@/components/ui/metric-card";
@@ -16,6 +16,16 @@ import { ReviewWidget } from "@/components/review-widget";
 import { usePageTitle } from "@/lib/use-page-title";
 import { useIncludePending } from "@/lib/pending-pref";
 import { useDashboardLayout, type DashboardWidgetId } from "@/lib/dashboard-pref";
+
+interface OverviewGoal {
+  id: string;
+  name: string;
+  type: string;
+  target_cents: number;
+  current_cents: number;
+  pct: number;
+  target_date: string | null;
+}
 
 interface Summary {
   totalBalanceCents: number;
@@ -219,6 +229,68 @@ function UpcomingBillsCard({ s }: { s: Summary }) {
   );
 }
 
+function GoalsCard({ goals, loading, failed }: { goals: OverviewGoal[]; loading: boolean; failed: boolean }) {
+  const savings = goals.filter((g) => g.type !== "expense");
+  const ordered = [...savings].sort((a, b) => {
+    const aComplete = a.current_cents >= a.target_cents;
+    const bComplete = b.current_cents >= b.target_cents;
+    if (aComplete !== bComplete) return aComplete ? 1 : -1;
+    return (a.target_date ?? "9999-12-31").localeCompare(b.target_date ?? "9999-12-31");
+  });
+  const visible = ordered.slice(0, 3);
+
+  return (
+    <Card className="min-w-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-muted text-text-muted" aria-hidden>
+            <Target size={17} />
+          </span>
+          <div>
+            <CardTitle>Goals</CardTitle>
+            <p className="text-xs text-text-muted">Progress toward your household savings targets.</p>
+          </div>
+        </div>
+        <Link href="/plan#goals-overview-heading" className="text-sm font-medium text-accent-text hover:underline">
+          View goals
+        </Link>
+      </div>
+      <div className="mt-4 space-y-4">
+        {loading && <div className="skeleton h-20" role="status" aria-label="Loading goals" />}
+        {failed && (
+          <div className="rounded-xl border border-border px-4 py-5 text-sm text-text-muted">Goals are unavailable right now. Open Plan to try again.</div>
+        )}
+        {!loading && !failed && visible.length === 0 && (
+          <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center">
+            <p className="text-sm text-text-muted">No savings goals yet.</p>
+            <Link href="/plan#goals-overview-heading" className="mt-1 inline-block text-sm font-medium text-accent-text hover:underline">
+              Create your first goal →
+            </Link>
+          </div>
+        )}
+        {!failed && visible.map((g) => {
+          const complete = g.current_cents >= g.target_cents;
+          return (
+            <div key={g.id} className="min-w-0">
+              <div className="mb-1 flex items-center justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate font-medium text-text">{g.name}</span>
+                <span className={complete ? "shrink-0 font-medium text-success" : "shrink-0 text-text-muted"}>
+                  {complete ? "Complete" : `${Math.round(Math.min(1, g.pct) * 100)}%`}
+                </span>
+              </div>
+              <Progress value={Math.min(1, g.pct)} label={`${g.name} goal progress on overview`} />
+              <p className="mt-1 text-xs text-text-muted">
+                <Money cents={g.current_cents} /> of <Money cents={g.target_cents} />
+                {g.target_date ? ` · ${formatShortDate(g.target_date)}` : ""}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function RecentCard({ s }: { s: Summary }) {
   return (
     <Card className="min-w-0">
@@ -327,6 +399,11 @@ export default function OverviewPage() {
     queryFn: () =>
       api.get<{ summary: Summary }>(`/api/summary${includePending ? "" : "?includePending=0"}`),
   });
+  const goals = useQuery({
+    queryKey: ["planning", "goals", "overview"],
+    queryFn: () => api.get<{ goals: OverviewGoal[] }>("/api/planning/goals"),
+    retry: false,
+  });
 
   if (error && !data) {
     return (
@@ -402,6 +479,8 @@ export default function OverviewPage() {
       <ReviewWidget />
 
       <UpcomingBillsCard s={s} />
+
+      <GoalsCard goals={goals.data?.goals ?? []} loading={goals.isLoading} failed={goals.isError} />
 
       {customizing && (
         <Card>

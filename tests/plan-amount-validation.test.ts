@@ -63,7 +63,7 @@ describe("plan add-sheet amount validation UX", () => {
       "disabled={createDebt.isPending || !debtName || !debtPrincipal || !!debtPrincipalError}"
     );
     expect(src).toContain(
-      "disabled={createGoal.isPending || !goalName || !goalTarget || !!goalTargetError}"
+      "disabled={createGoal.isPending || updateGoal.isPending || !goalName || !goalTarget || !!goalTargetError}"
     );
     expect(src).toContain(
       "disabled={createExpense.isPending || !expName || !expAmount || !!expAmountError || (expSetAside && expMode === \"days_of_month\" && expDays.length === 0)}"
