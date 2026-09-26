@@ -358,6 +358,37 @@ export default function BudgetsPage() {
         </Card>
       )}
 
+      {!hasFailed && !isLoading && data && (
+        <section aria-labelledby="budget-overview-heading" className="space-y-3">
+          <div>
+            <h2 id="budget-overview-heading" className="text-sm font-semibold text-text">Budget overview</h2>
+            <p className="mt-0.5 text-xs text-text-muted">{FRAME_LABELS[frame]} · totals use each budget&apos;s amount for this view.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <MetricCard
+              label="Budgeted in view"
+              value={<Money cents={budgetSummary.budgetedCents} />}
+              hint={`${data.budgets.length} active ${data.budgets.length === 1 ? "budget" : "budgets"}`}
+              icon={<PiggyBank size={17} />}
+            />
+            <MetricCard
+              label="Spent in view"
+              value={<Money cents={budgetSummary.spentCents} />}
+              hint={attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} attention` : "No budgets near their limit"}
+              icon={<CircleDollarSign size={17} />}
+              tone={budgetSummary.overCount > 0 ? "danger" : "default"}
+            />
+            <MetricCard
+              label="Remaining in view"
+              value={<Money cents={budgetSummary.remainingCents} signed />}
+              hint={budgetSummary.overCount > 0 ? `${budgetSummary.overCount} over limit` : "Across active budgets"}
+              icon={<Gauge size={17} />}
+              tone={budgetSummary.remainingCents < 0 ? "danger" : "positive"}
+            />
+          </div>
+        </section>
+      )}
+
       {/* Time-frame selector */}
       <Card>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -439,7 +470,7 @@ export default function BudgetsPage() {
         )}
       </Card>
 
-      {/* Monthly pool — this month's income, dwindling as you spend */}
+      {/* Cash flow context for the selected view. */}
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -447,7 +478,7 @@ export default function BudgetsPage() {
               {frame === "period" ? "This month's pool" : `${FRAME_LABELS[frame]} pool`}
             </CardTitle>
             <p className="mt-1 text-xs text-text-muted">
-              Income in the period, minus what you&apos;ve spent — it dwindles as expenses come in. This is your safe-to-spend pool.
+              Income minus spending in this view. This is cash-flow context, not an estimate of money available after future bills.
             </p>
           </div>
           {summary.data && (
@@ -465,7 +496,7 @@ export default function BudgetsPage() {
                 </p>
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-text-muted">Safe to spend</p>
+                <p className="text-xs text-text-muted">Net cash flow</p>
                 <p className={`money truncate text-xl font-bold sm:text-2xl ${summary.data.summary.monthNetCents >= 0 ? "text-text" : "text-danger"}`}>
                   <Money cents={summary.data.summary.monthNetCents} signed />
                 </p>
@@ -506,7 +537,7 @@ export default function BudgetsPage() {
                 const perDayCents = Math.floor(summary.data!.summary.monthNetCents / daysLeft);
                 return (
                   <p className="mt-2 text-xs text-text-muted">
-                    About <span className="font-medium text-text"><Money cents={perDayCents} /></span> per day left this month.
+                    Current net cash flow averages <span className="font-medium text-text"><Money cents={perDayCents} /></span> per remaining day this month.
                   </p>
                 );
               })()
