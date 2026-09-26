@@ -23,11 +23,11 @@ describe("transactions date-range filter", () => {
 
   it("Clear filters resets both date bounds", () => {
     const src = read("src/app/(app)/transactions/page.tsx");
-    // the empty-state branch now covers the date range
-    expect(src).toContain("q || accountId || categoryId || pendingOnly || from || to ?");
-    // the Clear filters handler clears from + to
+    // active-filter detection covers both date bounds and drives the empty state
+    expect(src).toContain("const hasFilters = Boolean(q || accountId || categoryId || pendingOnly || from || to);");
+    expect(src).toContain("{hasFilters ? (");
+    // the shared Clear filters handler clears from + to
     expect(src).toMatch(/setPendingOnly\(false\);\s*setFrom\(""\);\s*setTo\(""\);/);
-    // a dedicated Clear dates button resets them too
-    expect(src).toContain('aria-label="Clear date range"');
+    expect(src).toContain("onClick={clearFilters}");
   });
 });

@@ -36,8 +36,8 @@ describe("transactions search debounce", () => {
     expect(src).toContain('type="search"');
     // the filter bar is labelled as a search region for assistive tech
     expect(src).toContain('<div className="flex flex-wrap items-center gap-3" role="search">');
-    // the input is ~30ch wide (min-w-60 = 15rem) per the typeahead width guidance
-    expect(src).toContain('className="relative min-w-60 flex-1"');
+    // the search flexes to fill the primary row without forcing mobile overflow
+    expect(src).toContain('className="relative min-w-0 flex-1 basis-64"');
     // the input is linked to the results region it filters
     expect(src).toContain('aria-controls="tx-list"');
     // the input keeps its accessible name
