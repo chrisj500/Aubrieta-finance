@@ -268,6 +268,94 @@ export async function syncProviderConnection(
     }
   }
 
+  if (input.provider.getInvestments) {
+    try {
+      const investments = await input.provider.getInvestments(input.connectionSecret);
+      const securityIdByExternal = new Map<string, string>();
+      const syncedAt = now();
+
+      for (const security of investments.securities) {
+        const existing = await db.get<{ id: string }>(
+          `SELECT id FROM investment_securities
+            WHERE connection_id = ? AND provider = ? AND external_security_id = ?`,
+          input.connectionId,
+          providerKind,
+          security.externalId,
+        );
+        const securityId = existing?.id ?? randomUUID();
+        await db.run(
+          `INSERT INTO investment_securities (
+             id, user_id, connection_id, provider, external_security_id,
+             name, ticker, isin, cusip, security_type, currency, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(connection_id, provider, external_security_id)
+           DO UPDATE SET
+             name = excluded.name,
+             ticker = excluded.ticker,
+             isin = excluded.isin,
+             cusip = excluded.cusip,
+             security_type = excluded.security_type,
+             currency = excluded.currency,
+             updated_at = excluded.updated_at`,
+          securityId,
+          input.userId,
+          input.connectionId,
+          providerKind,
+          security.externalId,
+          security.name,
+          security.ticker ?? null,
+          security.isin ?? null,
+          security.cusip ?? null,
+          security.type ?? null,
+          security.currency,
+          syncedAt,
+        );
+        securityIdByExternal.set(security.externalId, securityId);
+      }
+
+      await db.run(
+        "DELETE FROM investment_holdings WHERE connection_id = ? AND user_id = ?",
+        input.connectionId,
+        input.userId,
+      );
+
+      for (const holding of investments.holdings) {
+        const accountId = rowByExternal.get(holding.accountExternalId);
+        const securityId = securityIdByExternal.get(holding.securityExternalId);
+        if (!accountId || !securityId) continue;
+        await db.run(
+          `INSERT INTO investment_holdings (
+             id, user_id, account_id, security_id, connection_id, provider,
+             quantity, institution_price_cents, institution_value_cents,
+             cost_basis_cents, currency, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(account_id, security_id)
+           DO UPDATE SET
+             quantity = excluded.quantity,
+             institution_price_cents = excluded.institution_price_cents,
+             institution_value_cents = excluded.institution_value_cents,
+             cost_basis_cents = excluded.cost_basis_cents,
+             currency = excluded.currency,
+             updated_at = excluded.updated_at`,
+          randomUUID(),
+          input.userId,
+          accountId,
+          securityId,
+          input.connectionId,
+          providerKind,
+          holding.quantity,
+          holding.institutionPriceMinor ?? null,
+          holding.institutionValueMinor ?? null,
+          holding.costBasisMinor ?? null,
+          holding.currency,
+          syncedAt,
+        );
+      }
+    } catch {
+      // Holdings are additive; keep the last known snapshot if refresh fails.
+    }
+  }
+
   if (input.provider.getRecurringStreams) {
     try {
       const streams = await input.provider.getRecurringStreams(input.connectionSecret);
