@@ -9,6 +9,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { Search, X, Trash2, Pencil, ChevronDown, RefreshCw, Upload } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardTitle } from "@/components/ui/card";
+import { Page, PageHeader } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CustomDatePicker } from "@/components/ui/custom-date-picker";
@@ -384,9 +385,25 @@ export default function TransactionsPage() {
     onError: (e) => setError(e instanceof Error ? e.message : "CSV import failed."),
   });
 
+  const hasFilters = Boolean(q || accountId || categoryId || pendingOnly || from || to);
+  const filterCount = [q.trim(), accountId, categoryId, pendingOnly ? "pending" : "", from, to].filter(Boolean).length;
+  const clearFilters = () => {
+    setQ("");
+    setDebouncedQ("");
+    setAccountId("");
+    setCategoryId("");
+    setPendingOnly(false);
+    setFrom("");
+    setTo("");
+  };
+
   return (
-    <div className="space-y-6">
-      <h1 className="sr-only">Transactions</h1>
+    <Page>
+      <PageHeader
+        title="Transactions"
+        description="Search, review, and organize activity across every account."
+      />
+
       {hasFailed && (
         <Card className="border-danger/30 bg-[var(--danger-soft)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -402,162 +419,153 @@ export default function TransactionsPage() {
         </Card>
       )}
 
-      {/* Sticky filter bar */}
-      <Card className="sticky top-20 z-20 py-3">
-        <div className="flex flex-wrap items-center gap-3" role="search">
-          <div className="relative min-w-60 flex-1">
-            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden />
-            <Input
-              type="search"
-              aria-label="Search transactions"
-              aria-controls="tx-list"
-              placeholder="Search transactions…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              className="pl-9 pr-8 [&::-webkit-search-cancel-button]:hidden"
-            />
-            {q && (
+      {/* Everyday transaction controls stay prominent; history/import tools are
+          deliberately separated below so the primary workflow remains calm. */}
+      <Card className="sticky top-20 z-20 p-3 sm:p-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-3" role="search">
+            <div className="relative min-w-0 flex-1 basis-64">
+              <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden />
+              <Input
+                type="search"
+                aria-label="Search transactions"
+                aria-controls="tx-list"
+                placeholder="Search transactions…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                className="pl-9 pr-8 [&::-webkit-search-cancel-button]:hidden"
+              />
+              {q && (
+                <button
+                  aria-label="Clear search"
+                  onClick={() => setQ("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-text-muted hover:text-text"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            <span role="status" aria-live="polite" className="shrink-0 text-sm text-text-muted">
+              {data ? `${data.total} transaction${data.total === 1 ? "" : "s"}` : "…"}
+            </span>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRefreshMsg(null);
+                syncNow.mutate();
+              }}
+              disabled={syncNow.isPending}
+              title="Refresh from your bank (posted + pending)"
+              className="shrink-0"
+            >
+              <RefreshCw size={14} className={syncNow.isPending ? "animate-spin" : ""} aria-hidden />
+              {syncNow.isPending ? "Refreshing…" : "Refresh"}
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+            <div className="min-w-40 flex-1 sm:flex-none">
+              <CustomSelect
+                ariaLabel="Filter by account"
+                value={accountId}
+                onChange={setAccountId}
+                placeholder="All accounts"
+                options={(accounts.data?.accounts ?? []).map((a) => ({ value: a.id, label: a.name }))}
+              />
+            </div>
+            <div className="min-w-40 flex-1 sm:flex-none">
+              <CustomSelect
+                ariaLabel="Filter by category"
+                value={categoryId}
+                onChange={setCategoryId}
+                placeholder="All categories"
+                options={(categories.data?.categories ?? []).map((c) => ({ value: c.id, label: c.name }))}
+              />
+            </div>
+            <button
+              type="button"
+              aria-pressed={pendingOnly}
+              onClick={() => setPendingOnly((v) => !v)}
+              className={`flex h-10 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition-colors ${
+                pendingOnly
+                  ? "border-accent bg-accent/15 text-accent-text"
+                  : "border-border bg-surface text-text-muted hover:text-text"
+              }`}
+            >
+              {pendingOnly && (
+                <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 6.5L4.5 9L10 3" />
+                </svg>
+              )}
+              Pending
+            </button>
+            <div className="min-w-36 flex-1 sm:flex-none">
+              <CustomDatePicker ariaLabel="From date" value={from} onChange={setFrom} max={to || undefined} />
+            </div>
+            <div className="min-w-36 flex-1 sm:flex-none">
+              <CustomDatePicker ariaLabel="To date" value={to} onChange={setTo} min={from || undefined} />
+            </div>
+            {hasFilters && (
               <button
-                aria-label="Clear search"
-                onClick={() => setQ("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-text-muted hover:text-text"
+                type="button"
+                onClick={clearFilters}
+                className="flex h-10 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
               >
-                <X size={14} />
+                <X size={14} aria-hidden />
+                Clear filters{filterCount > 0 ? ` (${filterCount})` : ""}
               </button>
             )}
           </div>
-          <div className="min-w-40">
-            <CustomSelect
-              ariaLabel="Filter by account"
-              value={accountId}
-              onChange={setAccountId}
-              placeholder="All accounts"
-              options={(accounts.data?.accounts ?? []).map((a) => ({ value: a.id, label: a.name }))}
-            />
-          </div>
-          <div className="min-w-40">
-            <CustomSelect
-              ariaLabel="Filter by category"
-              value={categoryId}
-              onChange={setCategoryId}
-              placeholder="All categories"
-              options={(categories.data?.categories ?? []).map((c) => ({ value: c.id, label: c.name }))}
-            />
-          </div>
-          <button
-            type="button"
-            aria-pressed={pendingOnly}
-            onClick={() => setPendingOnly((v) => !v)}
-            className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors ${
-              pendingOnly
-                ? "border-accent bg-accent/15 text-accent-text"
-                : "border-border bg-surface text-text-muted hover:text-text"
-            }`}
-          >
-            {pendingOnly && (
-              <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 6.5L4.5 9L10 3" />
-              </svg>
-            )}
-            Pending
-          </button>
-          <div className="min-w-36">
-            <CustomDatePicker
-              ariaLabel="From date"
-              value={from}
-              onChange={setFrom}
-              max={to || undefined}
-            />
-          </div>
-          <div className="min-w-36">
-            <CustomDatePicker
-              ariaLabel="To date"
-              value={to}
-              onChange={setTo}
-              min={from || undefined}
-            />
-          </div>
-          {(from || to) && (
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+            <span className="mr-1 text-xs font-medium uppercase tracking-wide text-text-muted">History tools</span>
             <button
               type="button"
-              aria-label="Clear date range"
-              onClick={() => {
-                setFrom("");
-                setTo("");
-              }}
-              className="flex h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-muted transition-colors hover:text-text"
+              onClick={() => pullHistory.mutate()}
+              disabled={pullHistory.isPending}
+              className="flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-text-muted transition-colors hover:bg-surface-muted hover:text-text disabled:cursor-wait disabled:opacity-60"
+              title="Re-pull the full history Plaid has for every linked bank (up to ~24 months from link date)"
             >
-              <X size={14} />
-              Clear dates
+              <RefreshCw size={14} className={pullHistory.isPending ? "animate-spin" : ""} aria-hidden />
+              {pullHistory.isPending ? "Pulling…" : "Pull full history"}
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setRefreshMsg(null);
-              syncNow.mutate();
-            }}
-            disabled={syncNow.isPending}
-            title="Refresh from your bank (posted + pending)"
-            className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors ${
-              syncNow.isPending
-                ? "cursor-wait border-border bg-surface text-text-muted"
-                : "border-border bg-surface text-text-muted hover:text-text"
-            }`}
-          >
-            <RefreshCw size={14} className={syncNow.isPending ? "animate-spin" : ""} />
-            {syncNow.isPending ? "Refreshing…" : "Refresh"}
-          </button>
-          <button
-            type="button"
-            onClick={() => pullHistory.mutate()}
-            disabled={pullHistory.isPending}
-            className={`flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors ${
-              pullHistory.isPending
-                ? "cursor-wait border-border bg-surface text-text-muted"
-                : "border-border bg-surface text-text-muted hover:text-text"
-            }`}
-            title="Re-pull the full history Plaid has for every linked bank (up to ~24 months from link date)"
-          >
-            <RefreshCw size={14} className={pullHistory.isPending ? "animate-spin" : ""} />
-            {pullHistory.isPending ? "Pulling…" : "Pull full history"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setError(null);
-              setImportMsg(null);
-              setShowImport(true);
-            }}
-            className="flex h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-muted transition-colors hover:text-text"
-            title="Import older transactions from a bank CSV file (for history your bank won't serve through Plaid)"
-          >
-            <Upload size={14} />
-            Import CSV
-          </button>
-          <span role="status" aria-live="polite" className="text-sm text-text-muted">{data ? `${data.total} transaction${data.total === 1 ? "" : "s"}` : "…"}</span>
-        </div>
-        {(refreshMsg || error || historyMsg) && (
-          <div className={`mt-2 px-1 text-xs ${error ? "text-red-500" : "text-text-muted"}`}>
-            {error ?? refreshMsg ?? historyMsg}
-            {historyDetail.length > 0 && (
-              <ul className="mt-2 space-y-1">
-                {historyDetail.map((d) => (
-                  <li key={d.name} className="flex items-center justify-between gap-2">
-                    <span className="truncate">{d.name}</span>
-                    <span className={d.ok ? "text-text-muted" : "text-red-500"}>
-                      {d.ok
-                        ? d.oldest
-                          ? `linked ${d.linkedAt ? d.linkedAt.slice(0, 10) : "?"} → back to ${d.oldest}`
-                          : `${d.added} updated`
-                        : "failed"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setImportMsg(null);
+                setShowImport(true);
+              }}
+              className="flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
+              title="Import older transactions from a bank CSV file (for history your bank won't serve through Plaid)"
+            >
+              <Upload size={14} aria-hidden />
+              Import CSV
+            </button>
           </div>
-        )}
+
+          {(refreshMsg || error || historyMsg) && (
+            <div className={`border-t border-border pt-3 text-xs ${error ? "text-danger" : "text-text-muted"}`}>
+              {error ?? refreshMsg ?? historyMsg}
+              {historyDetail.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {historyDetail.map((d) => (
+                    <li key={d.name} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{d.name}</span>
+                      <span className={d.ok ? "text-text-muted" : "text-danger"}>
+                        {d.ok
+                          ? d.oldest
+                            ? `linked ${d.linkedAt ? d.linkedAt.slice(0, 10) : "?"} → back to ${d.oldest}`
+                            : `${d.added} updated`
+                          : "failed"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* Add-transaction modal */}
@@ -934,20 +942,12 @@ export default function TransactionsPage() {
           <RowSkeleton />
         ) : data.rows.length === 0 ? (
           <div className="px-6 py-12 text-center">
-            {q || accountId || categoryId || pendingOnly || from || to ? (
+            {hasFilters ? (
               <>
                 <p className="text-sm text-text-muted">No transactions match your filters.</p>
                 <button
                   className="mt-1 text-sm font-medium text-accent-text hover:underline"
-                  onClick={() => {
-                    setQ("");
-                    setDebouncedQ("");
-                    setAccountId("");
-                    setCategoryId("");
-                    setPendingOnly(false);
-                    setFrom("");
-                    setTo("");
-                  }}
+                  onClick={clearFilters}
                 >
                   Clear filters
                 </button>
@@ -1122,6 +1122,6 @@ export default function TransactionsPage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }
