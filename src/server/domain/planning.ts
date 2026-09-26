@@ -4,12 +4,22 @@ import { assertValidCents } from "@/server/domain/money";
 import { getDb, type Db } from "@/server/db/registry";
 import { addDaysISO, addMonthsISO, monthsBetween, todayISO } from "@/server/domain/dates";
 import { createBillIntelligenceService } from "@/server/domain/bill-intelligence";
+import {
+  accountReadScope,
+  assertAccountReadable,
+  assertObjectManageable,
+  getHouseholdContext,
+  objectReadScope,
+} from "@/server/authz/household-access";
 
 export type BillFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly" | "one-time";
 
 export interface BillRow {
   id: string;
   user_id: string;
+  household_id: string | null;
+  owner_user_id: string | null;
+  visibility: "shared" | "private";
   name: string;
   amount_cents: number;
   frequency: BillFrequency;
@@ -44,6 +54,9 @@ export interface BillWithNames extends BillRow {
 export interface DebtRow {
   id: string;
   user_id: string;
+  household_id: string | null;
+  owner_user_id: string | null;
+  visibility: "shared" | "private";
   name: string;
   type: string;
   principal_cents: number;
@@ -72,6 +85,9 @@ export interface DebtWithAmortization extends DebtRow {
 export interface GoalRow {
   id: string;
   user_id: string;
+  household_id: string | null;
+  owner_user_id: string | null;
+  visibility: "shared" | "private";
   name: string;
   type: string;
   category: string;
@@ -141,6 +157,26 @@ export function parseDayList(raw: string | null | undefined): number[] {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+async function visibilityForAccount(
+  db: Db,
+  userId: string,
+  accountId: string | null | undefined,
+  requested?: "shared" | "private",
+): Promise<"shared" | "private"> {
+  if (!accountId) return requested ?? "shared";
+  await assertAccountReadable(db, userId, accountId);
+  const account = await db.get<{ visibility: "shared" | "private" }>(
+    "SELECT visibility FROM accounts WHERE id = ?",
+    accountId,
+  );
+  const accountVisibility = account?.visibility ?? "shared";
+  const visibility = requested ?? accountVisibility;
+  if (visibility === "shared" && accountVisibility === "private") {
+    throw apiErrors.badRequest("An item linked to a private account must also be private.");
+  }
+  return visibility;
 }
 
 /** Next calendar date with `day` on/after `refDate`, clamped to month end. */
@@ -280,18 +316,20 @@ export function createPlanningService(db: Db = getDb()) {
   return {
     // ── BILLS ──────────────────────────────────────────────────────────────
     async listBills(userId: string): Promise<BillWithNames[]> {
+      const scope = await objectReadScope(db, userId, "b");
       const rows = await db.all<BillDbRow>(
-        `${BILL_SELECT} WHERE b.user_id = ? ORDER BY b.active DESC, b.next_due_date ASC`,
-        userId
+        `${BILL_SELECT} WHERE ${scope.clause} ORDER BY b.active DESC, b.next_due_date ASC`,
+        ...scope.params,
       );
       return rows.map(toBillRow);
     },
 
     async getBill(userId: string, id: string): Promise<BillWithNames> {
+      const scope = await objectReadScope(db, userId, "b");
       const row = await db.get<BillDbRow>(
-        `${BILL_SELECT} WHERE b.id = ? AND b.user_id = ?`,
+        `${BILL_SELECT} WHERE b.id = ? AND ${scope.clause}`,
         id,
-        userId
+        ...scope.params,
       );
       if (!row) throw apiErrors.notFound("Bill");
       return toBillRow(row);
@@ -310,25 +348,44 @@ export function createPlanningService(db: Db = getDb()) {
         accountId?: string | null;
         active?: boolean;
         notes?: string | null;
+        visibility?: "shared" | "private";
         transactionId?: string | null; // create-from-transaction: prefill name/amount/category
       }
     ): Promise<BillWithNames> {
       let name = input.name.trim().slice(0, 100);
       let amountCents = input.amountCents;
       let categoryId = input.categoryId ?? null;
+      let linkedAccountVisibility: "shared" | "private" | null = null;
 
       if (input.transactionId) {
-        const txn = await db.get<{ name: string; amount_cents: number; user_category_id: string | null }>(
-          `SELECT t.name, t.amount_cents, t.user_category_id
+        const txnScope = await accountReadScope(db, userId, "a");
+        const txn = await db.get<{
+          name: string;
+          amount_cents: number;
+          user_category_id: string | null;
+          account_id: string;
+          account_visibility: "shared" | "private";
+        }>(
+          `SELECT t.name, t.amount_cents, t.user_category_id, t.account_id,
+                  a.visibility AS account_visibility
              FROM transactions t JOIN accounts a ON a.id = t.account_id
-            WHERE t.id = ? AND a.user_id = ? AND a.deleted_at IS NULL`,
+            WHERE t.id = ? AND ${txnScope.clause} AND a.deleted_at IS NULL`,
           input.transactionId,
-          userId
+          ...txnScope.params,
         );
         if (!txn) throw apiErrors.notFound("Transaction");
         if (!name) name = txn.name.slice(0, 100);
         if (!amountCents || amountCents === 0) amountCents = Math.abs(txn.amount_cents);
-        if (!categoryId) categoryId = txn.user_category_id;
+        if (!categoryId && txn.user_category_id) {
+          const ownCategory = await db.get(
+            "SELECT id FROM categories WHERE id = ? AND user_id = ?",
+            txn.user_category_id,
+            userId,
+          );
+          if (ownCategory) categoryId = txn.user_category_id;
+        }
+        if (!input.accountId) input.accountId = txn.account_id;
+        linkedAccountVisibility = txn.account_visibility;
       }
 
       if (!name) throw apiErrors.badRequest("Bill name cannot be empty.");
@@ -354,20 +411,33 @@ export function createPlanningService(db: Db = getDb()) {
         if (!cat) throw apiErrors.badRequest("That category does not exist.");
       }
       if (input.accountId) {
-        const acc = await db.get("SELECT id FROM accounts WHERE id = ? AND user_id = ?", input.accountId, userId);
-        if (!acc) throw apiErrors.badRequest("That account does not exist.");
+        await assertAccountReadable(db, userId, input.accountId);
+        const acc = await db.get<{ visibility: "shared" | "private" }>(
+          "SELECT visibility FROM accounts WHERE id = ?",
+          input.accountId,
+        );
+        linkedAccountVisibility = acc?.visibility ?? linkedAccountVisibility;
+      }
+      const visibility = input.visibility ?? linkedAccountVisibility ?? "shared";
+      if (visibility === "shared" && linkedAccountVisibility === "private") {
+        throw apiErrors.badRequest("A bill linked to a private account must also be private.");
       }
 
+      const household = await getHouseholdContext(db, userId);
       const id = randomUUID();
       const ts = now();
       const nextDueDate = initialDueDate(frequency, input.dueDay ?? null, input.nextDueDate ?? null);
       await db.run(
-        `INSERT INTO bills (id, user_id, name, amount_cents, frequency, due_day, next_due_date,
+        `INSERT INTO bills (id, user_id, household_id, owner_user_id, visibility,
+                            name, amount_cents, frequency, due_day, next_due_date,
                             last_paid_amount_cents, category_id, account_id, active, notes,
                             created_at, updated_at, source, source_confidence, user_overridden)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'user', 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 'user', 0)`,
         id,
         userId,
+        household?.householdId ?? null,
+        userId,
+        visibility,
         name,
         amountCents,
         frequency,
@@ -397,8 +467,10 @@ export function createPlanningService(db: Db = getDb()) {
         accountId: string | null;
         active: boolean;
         notes: string | null;
+        visibility: "shared" | "private";
       }>
     ): Promise<BillWithNames> {
+      await assertObjectManageable(db, userId, "bills", id);
       const row = await this.getBill(userId, id);
       const name = input.name !== undefined ? input.name.trim().slice(0, 100) : row.name;
       if (!name) throw apiErrors.badRequest("Bill name cannot be empty.");
@@ -419,6 +491,25 @@ export function createPlanningService(db: Db = getDb()) {
       if (frequency === "one-time" && !nextDueDate) {
         throw apiErrors.badRequest("One-time bills need a due date.");
       }
+      const categoryId = input.categoryId !== undefined ? input.categoryId : row.category_id;
+      if (categoryId) {
+        const cat = await db.get("SELECT id FROM categories WHERE id = ? AND user_id = ?", categoryId, userId);
+        if (!cat) throw apiErrors.badRequest("That category does not exist.");
+      }
+      const accountId = input.accountId !== undefined ? input.accountId : row.account_id;
+      let accountVisibility: "shared" | "private" | null = null;
+      if (accountId) {
+        await assertAccountReadable(db, userId, accountId);
+        const account = await db.get<{ visibility: "shared" | "private" }>(
+          "SELECT visibility FROM accounts WHERE id = ?",
+          accountId,
+        );
+        accountVisibility = account?.visibility ?? null;
+      }
+      const visibility = input.visibility ?? row.visibility;
+      if (visibility === "shared" && accountVisibility === "private") {
+        throw apiErrors.badRequest("A bill linked to a private account must also be private.");
+      }
 
       const isDerived =
         row.source !== "manual" ||
@@ -426,30 +517,31 @@ export function createPlanningService(db: Db = getDb()) {
         row.recurring_series_id !== null;
       await db.run(
         `UPDATE bills SET name = ?, amount_cents = ?, frequency = ?, due_day = ?, next_due_date = ?,
-                          category_id = ?, account_id = ?, active = ?, notes = ?,
+                          category_id = ?, account_id = ?, active = ?, notes = ?, visibility = ?,
                           user_overridden = CASE WHEN ? THEN 1 ELSE user_overridden END,
                           source_confidence = CASE WHEN ? THEN 'user' ELSE source_confidence END,
                           updated_at = ?
-          WHERE id = ? AND user_id = ?`,
+          WHERE id = ?`,
         name,
         amountCents,
         frequency,
         dueDay,
         nextDueDate,
-        input.categoryId !== undefined ? input.categoryId : row.category_id,
-        input.accountId !== undefined ? input.accountId : row.account_id,
+        categoryId,
+        accountId,
         input.active !== undefined ? (input.active ? 1 : 0) : row.active ? 1 : 0,
         input.notes != null ? input.notes.trim().slice(0, 500) || null : row.notes,
+        visibility,
         isDerived ? 1 : 0,
         isDerived ? 1 : 0,
         now(),
         id,
-        userId
       );
       return this.getBill(userId, id);
     },
 
     async removeBill(userId: string, id: string): Promise<void> {
+      await assertObjectManageable(db, userId, "bills", id);
       const bill = await this.getBill(userId, id);
       if (bill.recurring_series_id) {
         await db.run(
@@ -459,7 +551,7 @@ export function createPlanningService(db: Db = getDb()) {
           userId,
         );
       }
-      await db.run("DELETE FROM bills WHERE id = ? AND user_id = ?", id, userId);
+      await db.run("DELETE FROM bills WHERE id = ?", id);
     },
 
     /**
@@ -468,6 +560,7 @@ export function createPlanningService(db: Db = getDb()) {
      * by one frequency period. One-time bills deactivate after being paid.
      */
     async payBill(userId: string, id: string, amountCents?: number): Promise<BillWithNames> {
+      await assertObjectManageable(db, userId, "bills", id);
       const row = await this.getBill(userId, id);
       if (!row.active) throw apiErrors.badRequest("Inactive bills cannot be marked paid.");
       const paid = amountCents !== undefined ? amountCents : row.amount_cents;
@@ -494,13 +587,12 @@ export function createPlanningService(db: Db = getDb()) {
       const nextDue = advanceDueDate(row.frequency, dueDate);
       await db.run(
         `UPDATE bills SET last_paid_amount_cents = ?, next_due_date = ?, active = ?, updated_at = ?
-          WHERE id = ? AND user_id = ?`,
+          WHERE id = ?`,
         paid,
         nextDue,
         row.frequency === "one-time" ? 0 : 1,
         now(),
         id,
-        userId
       );
       await createBillIntelligenceService(db).ensureOccurrences(userId);
       return this.getBill(userId, id);
@@ -508,12 +600,21 @@ export function createPlanningService(db: Db = getDb()) {
 
     // ── DEBTS ──────────────────────────────────────────────────────────────
     async listDebts(userId: string): Promise<DebtWithAmortization[]> {
-      const rows = await db.all<DebtRow>("SELECT * FROM debts WHERE user_id = ? ORDER BY principal_cents DESC", userId);
+      const scope = await objectReadScope(db, userId, "d");
+      const rows = await db.all<DebtRow>(
+        `SELECT d.* FROM debts d WHERE ${scope.clause} ORDER BY d.principal_cents DESC`,
+        ...scope.params,
+      );
       return rows.map((d) => ({ ...d, amortization: amortize(d.principal_cents, d.apr_bps, d.term_months, d.min_payment_cents) }));
     },
 
     async getDebt(userId: string, id: string): Promise<DebtWithAmortization> {
-      const row = await db.get<DebtRow>("SELECT * FROM debts WHERE id = ? AND user_id = ?", id, userId);
+      const scope = await objectReadScope(db, userId, "d");
+      const row = await db.get<DebtRow>(
+        `SELECT d.* FROM debts d WHERE d.id = ? AND ${scope.clause}`,
+        id,
+        ...scope.params,
+      );
       if (!row) throw apiErrors.notFound("Debt");
       return { ...row, amortization: amortize(row.principal_cents, row.apr_bps, row.term_months, row.min_payment_cents) };
     },
@@ -531,6 +632,7 @@ export function createPlanningService(db: Db = getDb()) {
         nextDueDate?: string | null;
         accountId?: string | null;
         notes?: string | null;
+        visibility?: "shared" | "private";
       }
     ): Promise<DebtWithAmortization> {
       const name = input.name.trim().slice(0, 100);
@@ -547,19 +649,26 @@ export function createPlanningService(db: Db = getDb()) {
       if (input.termMonths !== null && input.termMonths !== undefined && (!Number.isInteger(input.termMonths) || input.termMonths < 1)) {
         throw apiErrors.badRequest("Term must be a positive number of months.");
       }
-      if (input.accountId) {
-        const acc = await db.get("SELECT id FROM accounts WHERE id = ? AND user_id = ?", input.accountId, userId);
-        if (!acc) throw apiErrors.badRequest("That account does not exist.");
-      }
+      const visibility = await visibilityForAccount(
+        db,
+        userId,
+        input.accountId,
+        input.visibility,
+      );
+      const household = await getHouseholdContext(db, userId);
 
       const id = randomUUID();
       const ts = now();
       await db.run(
-        `INSERT INTO debts (id, user_id, name, type, principal_cents, apr_bps, min_payment_cents,
+        `INSERT INTO debts (id, user_id, household_id, owner_user_id, visibility,
+                            name, type, principal_cents, apr_bps, min_payment_cents,
                             term_months, start_date, next_due_date, account_id, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         userId,
+        household?.householdId ?? null,
+        userId,
+        visibility,
         name,
         input.type?.trim().slice(0, 50) || "other",
         input.principalCents,
@@ -590,8 +699,10 @@ export function createPlanningService(db: Db = getDb()) {
         nextDueDate: string | null;
         accountId: string | null;
         notes: string | null;
+        visibility: "shared" | "private";
       }>
     ): Promise<DebtWithAmortization> {
+      await assertObjectManageable(db, userId, "debts", id);
       const row = await this.getDebt(userId, id);
       const name = input.name !== undefined ? input.name.trim().slice(0, 100) : row.name;
       if (!name) throw apiErrors.badRequest("Debt name cannot be empty.");
@@ -605,11 +716,18 @@ export function createPlanningService(db: Db = getDb()) {
       assertValidCents(minPayment, "minPaymentCents");
       const term = input.termMonths !== undefined ? input.termMonths : row.term_months;
       if (term !== null && (!Number.isInteger(term) || term < 1)) throw apiErrors.badRequest("Term must be a positive number of months.");
+      const accountId = input.accountId !== undefined ? input.accountId : row.account_id;
+      const visibility = await visibilityForAccount(
+        db,
+        userId,
+        accountId,
+        input.visibility ?? row.visibility,
+      );
 
       await db.run(
         `UPDATE debts SET name = ?, type = ?, principal_cents = ?, apr_bps = ?, min_payment_cents = ?,
-                          term_months = ?, start_date = ?, next_due_date = ?, account_id = ?, notes = ?, updated_at = ?
-          WHERE id = ? AND user_id = ?`,
+                          term_months = ?, start_date = ?, next_due_date = ?, account_id = ?, notes = ?, visibility = ?, updated_at = ?
+          WHERE id = ?`,
         name,
         input.type !== undefined ? input.type.trim().slice(0, 50) || "other" : row.type,
         principal,
@@ -618,27 +736,37 @@ export function createPlanningService(db: Db = getDb()) {
         term,
         input.startDate ?? row.start_date,
         input.nextDueDate !== undefined ? input.nextDueDate : row.next_due_date,
-        input.accountId !== undefined ? input.accountId : row.account_id,
+        accountId,
         input.notes != null ? input.notes.trim().slice(0, 500) || null : row.notes,
+        visibility,
         now(),
         id,
-        userId
       );
       return this.getDebt(userId, id);
     },
 
     async removeDebt(userId: string, id: string): Promise<void> {
-      await db.run("DELETE FROM debts WHERE id = ? AND user_id = ?", id, userId);
+      await assertObjectManageable(db, userId, "debts", id);
+      await db.run("DELETE FROM debts WHERE id = ?", id);
     },
 
     // ── GOALS ──────────────────────────────────────────────────────────────
     async listGoals(userId: string): Promise<GoalWithProgress[]> {
-      const rows = await db.all<GoalRow>("SELECT * FROM goals WHERE user_id = ? ORDER BY created_at DESC", userId);
+      const scope = await objectReadScope(db, userId, "g");
+      const rows = await db.all<GoalRow>(
+        `SELECT g.* FROM goals g WHERE ${scope.clause} ORDER BY g.created_at DESC`,
+        ...scope.params,
+      );
       return rows.map((g) => this.withProgress(g));
     },
 
     async getGoal(userId: string, id: string): Promise<GoalWithProgress> {
-      const row = await db.get<GoalRow>("SELECT * FROM goals WHERE id = ? AND user_id = ?", id, userId);
+      const scope = await objectReadScope(db, userId, "g");
+      const row = await db.get<GoalRow>(
+        `SELECT g.* FROM goals g WHERE g.id = ? AND ${scope.clause}`,
+        id,
+        ...scope.params,
+      );
       if (!row) throw apiErrors.notFound("Goal");
       return this.withProgress(row);
     },
@@ -673,6 +801,7 @@ export function createPlanningService(db: Db = getDb()) {
         contributionDays?: number[];
         accountId?: string | null;
         notes?: string | null;
+        visibility?: "shared" | "private";
       }
     ): Promise<GoalWithProgress> {
       const name = input.name.trim().slice(0, 100);
@@ -694,10 +823,13 @@ export function createPlanningService(db: Db = getDb()) {
       if (input.monthlyContributionCents !== null && input.monthlyContributionCents !== undefined) {
         assertValidCents(input.monthlyContributionCents, "monthlyContributionCents");
       }
-      if (input.accountId) {
-        const acc = await db.get("SELECT id FROM accounts WHERE id = ? AND user_id = ?", input.accountId, userId);
-        if (!acc) throw apiErrors.badRequest("That account does not exist.");
-      }
+      const visibility = await visibilityForAccount(
+        db,
+        userId,
+        input.accountId,
+        input.visibility,
+      );
+      const household = await getHouseholdContext(db, userId);
       // Contribution plan (012): one-off expenses can set money aside on a
       // schedule — regular intervals, specific days of the month, or agent-managed.
       const contributionMode = validateContributionMode(input.contributionMode);
@@ -712,12 +844,16 @@ export function createPlanningService(db: Db = getDb()) {
       const id = randomUUID();
       const ts = now();
       await db.run(
-        `INSERT INTO goals (id, user_id, name, type, category, target_cents, target_date, current_cents,
+        `INSERT INTO goals (id, user_id, household_id, owner_user_id, visibility,
+                            name, type, category, target_cents, target_date, current_cents,
                             monthly_contribution_cents, contribution_mode, contribution_interval, contribution_days,
                             account_id, notes, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         userId,
+        household?.householdId ?? null,
+        userId,
+        visibility,
         name,
         input.type?.trim().slice(0, 30) || "savings",
         input.category?.trim().slice(0, 50) || "general",
@@ -752,8 +888,10 @@ export function createPlanningService(db: Db = getDb()) {
         contributionDays: number[];
         accountId: string | null;
         notes: string | null;
+        visibility: "shared" | "private";
       }>
     ): Promise<GoalWithProgress> {
+      await assertObjectManageable(db, userId, "goals", id);
       const row = await this.getGoal(userId, id);
       const name = input.name !== undefined ? input.name.trim().slice(0, 100) : row.name;
       if (!name) throw apiErrors.badRequest("Goal name cannot be empty.");
@@ -778,12 +916,19 @@ export function createPlanningService(db: Db = getDb()) {
         throw apiErrors.badRequest("Regular-interval contributions need an interval: weekly, biweekly or monthly.");
       }
       const contributionDays = input.contributionDays !== undefined ? normalizeContributionDays(input.contributionDays) : parseDayList(row.contribution_days);
+      const accountId = input.accountId !== undefined ? input.accountId : row.account_id;
+      const visibility = await visibilityForAccount(
+        db,
+        userId,
+        accountId,
+        input.visibility ?? row.visibility,
+      );
 
       await db.run(
         `UPDATE goals SET name = ?, type = ?, category = ?, target_cents = ?, target_date = ?, current_cents = ?,
                           monthly_contribution_cents = ?, contribution_mode = ?, contribution_interval = ?, contribution_days = ?,
-                          account_id = ?, notes = ?, updated_at = ?
-          WHERE id = ? AND user_id = ?`,
+                          account_id = ?, notes = ?, visibility = ?, updated_at = ?
+          WHERE id = ?`,
         name,
         input.type !== undefined ? input.type.trim().slice(0, 30) || "savings" : row.type,
         input.category !== undefined ? input.category.trim().slice(0, 50) || "general" : row.category,
@@ -794,17 +939,18 @@ export function createPlanningService(db: Db = getDb()) {
         contributionMode,
         contributionInterval,
         contributionDays.length > 0 ? JSON.stringify(contributionDays) : null,
-        input.accountId !== undefined ? input.accountId : row.account_id,
+        accountId,
         input.notes != null ? input.notes.trim().slice(0, 500) || null : row.notes,
+        visibility,
         now(),
         id,
-        userId
       );
       return this.getGoal(userId, id);
     },
 
     async removeGoal(userId: string, id: string): Promise<void> {
-      await db.run("DELETE FROM goals WHERE id = ? AND user_id = ?", id, userId);
+      await assertObjectManageable(db, userId, "goals", id);
+      await db.run("DELETE FROM goals WHERE id = ?", id);
     },
 
     // ── MANUAL PAYDAYS (012) ──────────────────────────────────────────────
