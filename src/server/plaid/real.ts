@@ -12,8 +12,10 @@ import {
   type PlaidAccount,
   PlaidClient,
   PlaidCreds,
+  PlaidHolding,
   PlaidLiability,
   PlaidRecurringStream,
+  PlaidSecurity,
   PlaidSyncResult,
   PlaidTestResult,
   PlaidTransaction,
@@ -95,7 +97,7 @@ export const realPlaidClient: PlaidClient = {
         ? { access_token: accessToken }
         : {
             products: [Products.Transactions],
-            additional_consented_products: [Products.Liabilities],
+            additional_consented_products: [Products.Liabilities, Products.Investments],
             transactions: { days_requested: 730 },
           }),
     };
@@ -232,6 +234,48 @@ export const realPlaidClient: PlaidClient = {
     }
 
     return out;
+  },
+
+  async getInvestments(creds, accessToken) {
+    const client = clientFor(creds);
+    const res = await client.investmentsHoldingsGet({ access_token: accessToken });
+    type RawSecurity = {
+      security_id: string;
+      name: string | null;
+      ticker_symbol: string | null;
+      isin: string | null;
+      cusip: string | null;
+      type: string | null;
+      iso_currency_code: string | null;
+    };
+    type RawHolding = {
+      account_id: string;
+      security_id: string;
+      quantity: number;
+      institution_price: number | null;
+      institution_value: number | null;
+      cost_basis: number | null;
+      iso_currency_code: string | null;
+    };
+    const securities = (res.data.securities as unknown as RawSecurity[]).map((s): PlaidSecurity => ({
+      id: s.security_id,
+      name: s.name ?? s.ticker_symbol ?? "Unknown security",
+      ticker: s.ticker_symbol ?? null,
+      isin: s.isin ?? null,
+      cusip: s.cusip ?? null,
+      type: s.type ?? null,
+      currency: s.iso_currency_code ?? "USD",
+    }));
+    const holdings = (res.data.holdings as unknown as RawHolding[]).map((h): PlaidHolding => ({
+      accountId: h.account_id,
+      securityId: h.security_id,
+      quantity: h.quantity,
+      institutionPriceCents: h.institution_price == null ? null : cents(h.institution_price),
+      institutionValueCents: h.institution_value == null ? null : cents(h.institution_value),
+      costBasisCents: h.cost_basis == null ? null : cents(h.cost_basis),
+      currency: h.iso_currency_code ?? "USD",
+    }));
+    return { securities, holdings };
   },
 
   async getRecurringStreams(creds, accessToken) {

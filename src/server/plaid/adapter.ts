@@ -62,6 +62,26 @@ export interface PlaidRecurringStream {
   active: boolean;
 }
 
+export interface PlaidSecurity {
+  id: string;
+  name: string;
+  ticker: string | null;
+  isin: string | null;
+  cusip: string | null;
+  type: string | null;
+  currency: string;
+}
+
+export interface PlaidHolding {
+  accountId: string;
+  securityId: string;
+  quantity: number;
+  institutionPriceCents: number | null;
+  institutionValueCents: number | null;
+  costBasisCents: number | null;
+  currency: string;
+}
+
 export interface PlaidLiability {
   accountId: string;
   kind: "credit_card" | "mortgage" | "student_loan";
@@ -97,6 +117,7 @@ export interface PlaidClient {
     end: string
   ): Promise<PlaidTransaction[]>;
   getLiabilities?(creds: PlaidCreds, accessToken: string): Promise<PlaidLiability[]>;
+  getInvestments?(creds: PlaidCreds, accessToken: string): Promise<{ securities: PlaidSecurity[]; holdings: PlaidHolding[] }>;
   getRecurringStreams?(creds: PlaidCreds, accessToken: string): Promise<PlaidRecurringStream[]>;
   removeItem(creds: PlaidCreds, accessToken: string): Promise<void>;
   testCredentials(creds: PlaidCreds): Promise<PlaidTestResult>;
