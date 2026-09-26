@@ -193,5 +193,36 @@ seedHistory(checking, 421350, 1850); // checking grew ~$18.50/day
 seedHistory(savings, 1250000, 4200); // savings grew ~$42/day
 seedHistory(credit, -84325, -620); // card debt shrank ~$6.20/day (stored negative)
 
+// M3 household model: the CLI demo seed can run after migration 026 has
+// already been recorded, so users created by the seed are not covered by the
+// migration backfill. Make the seeded demo user a household owner and scope
+// every seeded financial object explicitly. Keep this conditional so the seed
+// remains usable against pre-M3 schemas during migration/testing workflows.
+const hasHouseholds = db.prepare(
+  "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'households'"
+).get();
+if (hasHouseholds) {
+  const householdId = `household:${demoUserId}`;
+  const ts = now();
+  db.prepare(
+    `INSERT INTO households (id, name, created_by_user_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`
+  ).run(householdId, "Demo Household", demoUserId, ts, ts);
+  db.prepare(
+    `INSERT INTO household_members (household_id, user_id, role, joined_at)
+     VALUES (?, ?, 'owner', ?)
+     ON CONFLICT(household_id, user_id) DO UPDATE SET role = 'owner'`
+  ).run(householdId, demoUserId, ts);
+
+  for (const table of ["accounts", "budgets", "bills", "goals", "debts"]) {
+    db.prepare(
+      `UPDATE ${table}
+          SET household_id = ?, owner_user_id = ?, visibility = 'shared'
+        WHERE user_id = ?`
+    ).run(householdId, demoUserId, demoUserId);
+  }
+}
+
 db.close();
 console.log(`Seeded demo data for "${DEMO_USERNAME}" (seed date ${seedDate}) at ${dbPath}`);
