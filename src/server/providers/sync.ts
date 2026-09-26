@@ -63,13 +63,15 @@ export async function syncProviderConnection(
     connectionSecret: unknown;
   },
 ): Promise<ProviderSyncResult> {
+  const household = await getHouseholdContext(db, input.userId);
   const connection = await db.get<{
     id: string;
     provider: ProviderKind;
     institution_name: string | null;
     sync_cursor: string | null;
+    household_id: string | null;
   }>(
-    `SELECT id, provider, institution_name, sync_cursor
+    `SELECT id, provider, institution_name, sync_cursor, household_id
        FROM provider_connections
       WHERE id = ? AND user_id = ?`,
     input.connectionId,
@@ -79,9 +81,11 @@ export async function syncProviderConnection(
   if (connection.provider !== input.provider.descriptor.kind) {
     throw new Error(`Provider mismatch for connection ${connection.id}.`);
   }
+  if (connection.household_id && household && connection.household_id !== household.householdId) {
+    throw new Error("Provider connection tenant mismatch.");
+  }
 
   const providerKind = input.provider.descriptor.kind;
-  const household = await getHouseholdContext(db, input.userId);
   const freshAccounts = await input.provider.listAccounts(input.connectionSecret);
   const refs = await db.all<{
     account_id: string;

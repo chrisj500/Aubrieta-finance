@@ -12,7 +12,7 @@ const TABLES = [
   "budget_categories", "user_settings", "bills", "debts", "goals",
   "agent_tokens", "agent_access_log", "agent_permission_requests",
   "custom_views", "pairing_codes", "households", "household_members", "household_invitations", "households", "household_members",
-  "household_invitations",
+  "household_invitations", "instance_admins",
 ];
 
 describe("migrations", () => {
@@ -158,6 +158,50 @@ describe("migrations", () => {
     });
     expect(db.prepare("SELECT household_id, owner_user_id, visibility FROM bills WHERE id = 'b1'").get()).toMatchObject({
       household_id: "household:u1", owner_user_id: "u1", visibility: "shared",
+    });
+    db.close();
+  });
+
+  it("upgrades an existing M3 install for multi-household hosting", () => {
+    const fs = require("fs");
+    const dir = path.resolve("migrations");
+    const files = fs.readdirSync(dir)
+      .filter((f: string) => /^\d+_.*\.sql$/.test(f))
+      .sort((a: string, b: string) => parseInt(a, 10) - parseInt(b, 10));
+    const db = new Database(":memory:");
+    for (const f of files.filter((f: string) => parseInt(f, 10) < 26)) {
+      db.exec(fs.readFileSync(path.join(dir, f), "utf8"));
+    }
+
+    const t1 = "2026-01-01T00:00:00.000Z";
+    const t2 = "2026-02-01T00:00:00.000Z";
+    db.prepare(
+      "INSERT INTO users (id, username, display_name, password_hash, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+    ).run("u1", "oldest", "Oldest User", "x", t1, t1);
+    db.prepare(
+      "INSERT INTO users (id, username, display_name, password_hash, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+    ).run("u2", "second", "Second User", "x", t2, t2);
+    db.prepare(
+      `INSERT INTO provider_connections
+       (id, user_id, provider, external_connection_id, status, capabilities_json, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run("pc2", "u2", "teller", "external-2", "active", "[]", t2, t2);
+
+    db.exec(fs.readFileSync(path.join(dir, "026_household_model.sql"), "utf8"));
+    db.exec(fs.readFileSync(path.join(dir, "027_multi_household_foundation.sql"), "utf8"));
+
+    expect(db.prepare("SELECT user_id FROM instance_admins").all()).toEqual([{ user_id: "u1" }]);
+    expect(db.prepare("SELECT household_id FROM provider_connections WHERE id = 'pc2'").get()).toEqual({
+      household_id: "household:u2",
+    });
+
+    db.prepare(
+      `INSERT INTO household_invitations
+       (id, household_id, token_hash, role, invited_by_user_id, expires_at, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).run("owner-invite", "household:u2", "hash", "owner", "u1", "2027-01-01T00:00:00Z", t2);
+    expect(db.prepare("SELECT role FROM household_invitations WHERE id = 'owner-invite'").get()).toEqual({
+      role: "owner",
     });
     db.close();
   });

@@ -3,6 +3,7 @@ import { apiErrors, ok, route } from "@/lib/api";
 import { requireCsrf, requireSession } from "@/server/auth/service";
 import { assertBackupSize, createBackupService } from "@/server/domain/backup";
 import { getDb } from "@/server/db/adapter";
+import { requireInstanceAdmin } from "@/server/authz/instance-admin";
 
 export const runtime = "nodejs";
 
@@ -11,12 +12,13 @@ export const maxDuration = 60;
 /**
  * Restore from an encrypted .ofbak upload. Password-confirmed; writes a
  * pre-restore auto-backup first; wrong key → clean 400. Agent tokens can never
- * call this (session cookie + CSRF + password required).
+ * call this (instance-admin session + CSRF + password required).
  */
 export async function POST(req: NextRequest) {
   return route(async (req) => {
     const session = await requireSession(req);
     requireCsrf(req);
+    await requireInstanceAdmin(getDb(), session.userId);
     // Reject oversized uploads BEFORE buffering the multipart body into RAM
     // (declared Content-Length; the parsed file size is re-checked below for
     // chunked/lying headers).

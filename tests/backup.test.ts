@@ -16,6 +16,7 @@ import { hashPassword } from "@/server/auth/password";
 import { createSession } from "@/server/auth/sessions";
 import { detectHub, preferredHubUrl } from "@/server/detect/detect";
 import { seedUser } from "./helpers";
+import { GET as backupGet } from "@/app/api/backup/route";
 import { POST as restorePost } from "@/app/api/backup/restore/route";
 
 function tmpDbPath(): string {
@@ -129,19 +130,49 @@ describe("backup upload size cap", () => {
     }
   });
 
+
+  it("whole-instance backup is forbidden to a normal household user", async () => {
+    const sqlite = getSqliteDb();
+    const hasUsers = await sqlite.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'");
+    if (!hasUsers) {
+      const dir = path.join(process.cwd(), "migrations");
+      const sqls = fs
+        .readdirSync(dir)
+        .filter((f) => /^\d+_.*\.sql$/.test(f))
+        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+        .map((f) => fs.readFileSync(path.join(dir, f), "utf8"));
+      for (const sql of sqls) getSqliteDb().exec(sql);
+    }
+    const user = await seedUser(sqlite, `backup-nonadmin-${randomUUID().slice(0, 8)}`);
+    const { token } = await createSession(user.id, "1h", "backup-nonadmin", sqlite);
+    const res = await backupGet(
+      new NextRequest("http://localhost/api/backup", {
+        headers: { cookie: `of_session=${token}` },
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
   it("restore route returns 413 for an oversized upload before touching the DB", async () => {
     // Migrate the singleton (what the route uses via getDb()).
-    const dir = path.join(process.cwd(), "migrations");
-    const sqls = fs
-      .readdirSync(dir)
-      .filter((f) => /^\d+_.*\.sql$/.test(f))
-      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
-      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"));
     const sqlite = getSqliteDb();
-    for (const sql of sqls) sqlite.exec(sql);
+    const hasUsers = await sqlite.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'");
+    if (!hasUsers) {
+      const dir = path.join(process.cwd(), "migrations");
+      const sqls = fs
+        .readdirSync(dir)
+        .filter((f) => /^\d+_.*\.sql$/.test(f))
+        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+        .map((f) => fs.readFileSync(path.join(dir, f), "utf8"));
+      for (const sql of sqls) sqlite.exec(sql);
+    }
 
     const user = await seedUser(sqlite, "restore-size");
     await sqlite.run("UPDATE users SET password_hash = ? WHERE id = ?", await hashPassword("size-check-pass"), user.id);
+    await sqlite.run(
+      "INSERT OR IGNORE INTO instance_admins (user_id, created_at, created_by_user_id) VALUES (?, ?, ?)",
+      user.id, new Date().toISOString(), user.id,
+    );
     const { token } = await createSession(user.id, "1h", "size-test", sqlite);
     const cookie = `of_session=${token}`;
 

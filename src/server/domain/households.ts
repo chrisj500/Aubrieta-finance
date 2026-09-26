@@ -196,8 +196,8 @@ export function createHouseholdService(db: Db = getDb()) {
     },
 
     async claimInvitation(token: string, userId: string): Promise<string> {
-      const invitation = await db.get<{ id: string; household_id: string }>(
-        `SELECT id, household_id
+      const invitation = await db.get<{ id: string; household_id: string; role: HouseholdRole }>(
+        `SELECT id, household_id, role
            FROM household_invitations
           WHERE token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL
             AND expires_at > ?`,
@@ -205,6 +205,15 @@ export function createHouseholdService(db: Db = getDb()) {
       );
       if (!invitation) {
         throw apiErrors.badRequest("This household invitation is invalid or has expired.");
+      }
+      if (invitation.role === "owner") {
+        const currentOwner = await db.get<{ user_id: string }>(
+          "SELECT user_id FROM household_members WHERE household_id = ? AND role = 'owner'",
+          invitation.household_id,
+        );
+        if (currentOwner) {
+          throw apiErrors.conflict("This household already has an owner.");
+        }
       }
       const existing = await db.get<{ household_id: string }>(
         "SELECT household_id FROM household_members WHERE user_id = ?",
@@ -215,8 +224,8 @@ export function createHouseholdService(db: Db = getDb()) {
       }
       if (!existing) {
         await db.run(
-          "INSERT INTO household_members (household_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
-          invitation.household_id, userId, now(),
+          "INSERT INTO household_members (household_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)",
+          invitation.household_id, userId, invitation.role, now(),
         );
       }
       const result = await db.run(
@@ -226,6 +235,15 @@ export function createHouseholdService(db: Db = getDb()) {
         userId, now(), invitation.id,
       );
       if (!result.changes) throw apiErrors.conflict("That invitation has already been used.");
+      if (invitation.role === "owner") {
+        await db.run(
+          `UPDATE household_invitations
+              SET revoked_at = ?
+            WHERE household_id = ? AND role = 'owner' AND id != ?
+              AND accepted_at IS NULL AND revoked_at IS NULL`,
+          now(), invitation.household_id, invitation.id,
+        );
+      }
       return invitation.household_id;
     },
     async removeMember(userId: string, memberUserId: string): Promise<void> {
@@ -255,6 +273,10 @@ export function createHouseholdService(db: Db = getDb()) {
             newHouseholdId, memberUserId,
           );
         }
+        await db.run(
+          "UPDATE provider_connections SET household_id = ? WHERE user_id = ?",
+          newHouseholdId, memberUserId,
+        );
         await db.run(
           "DELETE FROM household_members WHERE household_id = ? AND user_id = ?",
           householdId, memberUserId,

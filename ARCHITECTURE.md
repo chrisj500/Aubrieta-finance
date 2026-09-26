@@ -134,3 +134,17 @@ Open Finance is a source foundation, not a permanent architectural constraint.
 Upstream changes are reviewed and selectively incorporated. We do not automatically merge upstream main into Aubrieta.
 
 The canonical upstream provenance is documented in UPSTREAM.md.
+## Multi-household tenancy
+
+Aubrieta may host multiple independent households in one SQLite instance. A user
+belongs to exactly one household (`household_members.user_id` remains unique).
+The authenticated user determines the tenant; clients never select a household
+id for finance queries. Shared finance objects are readable only inside that
+household, while private objects remain owner-only.
+
+Instance administration is intentionally separate from household membership. An
+instance administrator can provision households and issue the first owner invite,
+but that role alone grants no access to balances, transactions, bills, budgets,
+goals, debts, reports, or agent/MCP finance data in another household. Whole-
+instance backup and restore are instance-admin operations because they contain
+all hosted households.

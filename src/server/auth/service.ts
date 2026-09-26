@@ -101,6 +101,12 @@ export function createAuthService(db: Db = getDb()) {
         } else {
           await household.createForUser(id);
         }
+        if ((realUsers?.n ?? 0) === 0) {
+          await db.run(
+            "INSERT OR IGNORE INTO instance_admins (user_id, created_at, created_by_user_id) VALUES (?, ?, ?)",
+            id, ts, id,
+          );
+        }
       });
       return { user: await this.getUserById(id) };
     },
