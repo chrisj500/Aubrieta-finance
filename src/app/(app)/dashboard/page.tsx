@@ -6,6 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { TrendingDown, TrendingUp, Wallet, Scale, Settings2, ChevronUp, ChevronDown, EyeOff, Eye, RotateCcw, CalendarClock, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardLabel, CardTitle } from "@/components/ui/card";
+import { MetricCard } from "@/components/ui/metric-card";
+import { Page, PageHeader } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/badge";
 import { Money } from "@/components/money";
@@ -45,9 +47,9 @@ interface Summary {
   }>;
 }
 
-function DashboardSkeleton() {
+function OverviewSkeleton() {
   return (
-    <div className="space-y-6" role="status" aria-busy="true" aria-label="Loading your dashboard">
+    <Page role="status" aria-busy="true" aria-label="Loading your overview">
       <div className="skeleton h-28" />
       <div className="grid gap-4 sm:grid-cols-3">
         {[0, 1, 2].map((i) => (
@@ -58,7 +60,7 @@ function DashboardSkeleton() {
         <div className="skeleton h-56" />
         <div className="skeleton h-56" />
       </div>
-    </div>
+    </Page>
   );
 }
 
@@ -68,7 +70,7 @@ function formatShortDate(iso: string) {
 }
 
 const WIDGET_LABELS = {
-  balance: "Total balance",
+  balance: "Net worth",
   stats: "Monthly stats",
   budgets: "Budgets",
   recent: "Recent transactions",
@@ -83,7 +85,7 @@ function BalanceCard({ s }: { s: Summary }) {
     >
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <CardLabel>Total balance</CardLabel>
+          <CardLabel>Net worth</CardLabel>
           <p className="money mt-1 text-4xl font-bold tracking-tight">
             <Money cents={s.totalBalanceCents} />
           </p>
@@ -106,33 +108,23 @@ function StatsRow({ s }: { s: Summary }) {
   const netPositive = s.monthNetCents >= 0;
   return (
     <div className="grid gap-4 sm:grid-cols-3">
-      <Card>
-        <div className="flex items-center gap-2 text-success">
-          <TrendingUp size={16} aria-hidden />
-          <CardLabel>Income this month</CardLabel>
-        </div>
-        <p className="money mt-1.5 text-2xl font-bold text-success">
-          <Money cents={s.monthIncomeCents} />
-        </p>
-      </Card>
-      <Card>
-        <div className="flex items-center gap-2 text-text-muted">
-          <TrendingDown size={16} aria-hidden />
-          <CardLabel>Spent this month</CardLabel>
-        </div>
-        <p className="money mt-1.5 text-2xl font-bold">
-          <Money cents={s.monthExpenseCents} />
-        </p>
-      </Card>
-      <Card>
-        <div className="flex items-center gap-2 text-text-muted">
-          <Scale size={16} aria-hidden />
-          <CardLabel>Net this month</CardLabel>
-        </div>
-        <p className={`money mt-1.5 text-2xl font-bold ${netPositive ? "text-success" : "text-danger"}`}>
-          <Money cents={s.monthNetCents} signed />
-        </p>
-      </Card>
+      <MetricCard
+        label="Income this month"
+        value={<Money cents={s.monthIncomeCents} />}
+        icon={<TrendingUp size={17} />}
+        tone="positive"
+      />
+      <MetricCard
+        label="Spent this month"
+        value={<Money cents={s.monthExpenseCents} />}
+        icon={<TrendingDown size={17} />}
+      />
+      <MetricCard
+        label="Net this month"
+        value={<Money cents={s.monthNetCents} signed />}
+        icon={<Scale size={17} />}
+        tone={netPositive ? "positive" : "danger"}
+      />
     </div>
   );
 }
@@ -325,8 +317,8 @@ function LayoutControls({
   );
 }
 
-export default function DashboardPage() {
-  usePageTitle("Dashboard");
+export default function OverviewPage() {
+  usePageTitle("Overview");
   const [includePending] = useIncludePending();
   const { layout, move, toggleHidden, reset } = useDashboardLayout();
   const [customizing, setCustomizing] = useState(false);
@@ -340,7 +332,7 @@ export default function DashboardPage() {
     return (
       <Card className="mx-auto max-w-md p-6 text-center">
         <p role="alert" className="text-sm text-danger">
-          Couldn&apos;t load your dashboard{error instanceof Error && error.message ? ` — ${error.message}` : ""}.
+          Couldn&apos;t load your overview{error instanceof Error && error.message ? ` — ${error.message}` : ""}.
         </p>
         <Button variant="secondary" size="sm" className="mt-3" onClick={() => refetch()} disabled={isFetching}>
           {isFetching ? "Retrying…" : "Try again"}
@@ -348,7 +340,7 @@ export default function DashboardPage() {
       </Card>
     );
   }
-  if (isLoading || !data) return <DashboardSkeleton />;
+  if (isLoading || !data) return <OverviewSkeleton />;
   const s = data.summary;
 
   const widgets = {
@@ -380,23 +372,28 @@ export default function DashboardPage() {
     }
   }
 
+  const customizeAction = (
+    <button
+      type="button"
+      onClick={() => setCustomizing((c) => !c)}
+      aria-pressed={customizing}
+      aria-label={customizing ? "Done customizing overview layout" : "Customize overview layout"}
+      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium ${
+        customizing ? "bg-accent/10 text-accent-text" : "text-text-muted hover:bg-surface-muted hover:text-text"
+      }`}
+    >
+      <Settings2 size={16} aria-hidden />
+      {customizing ? "Done" : "Customize"}
+    </button>
+  );
+
   return (
-    <div className="space-y-6 overflow-x-clip">
-      <h1 className="sr-only">Dashboard</h1>
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={() => setCustomizing((c) => !c)}
-          aria-pressed={customizing}
-          aria-label={customizing ? "Done customizing dashboard layout" : "Customize dashboard layout"}
-          className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium ${
-            customizing ? "bg-accent/10 text-accent-text" : "text-text-muted hover:bg-surface-muted hover:text-text"
-          }`}
-        >
-          <Settings2 size={16} aria-hidden />
-          {customizing ? "Done" : "Customize"}
-        </button>
-      </div>
+    <Page className="overflow-x-clip">
+      <PageHeader
+        title="Overview"
+        description="Your household finances, upcoming obligations, and recent activity at a glance."
+        action={customizeAction}
+      />
 
       {/* Widgets your AI added (dev:ui) — removable inline */}
       <AgentWidgets tab="dashboard" />
@@ -409,11 +406,11 @@ export default function DashboardPage() {
       {customizing && (
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle>Dashboard layout</CardTitle>
+            <CardTitle>Overview layout</CardTitle>
             <button
               type="button"
               onClick={reset}
-              aria-label="Reset dashboard layout to default"
+              aria-label="Reset overview layout to default"
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-text-muted hover:bg-surface-muted hover:text-text"
             >
               <RotateCcw size={14} aria-hidden />
@@ -444,6 +441,6 @@ export default function DashboardPage() {
       )}
 
       {blocks}
-    </div>
+    </Page>
   );
 }
