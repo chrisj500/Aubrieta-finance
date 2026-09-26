@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "next build --turbopack && node scripts/build-sw.mjs --server",
     "start": "node .next/standalone/server.js",
     "lint": "eslint",
     "lint:slop": "oxlint --config oxlint.config.ts",
