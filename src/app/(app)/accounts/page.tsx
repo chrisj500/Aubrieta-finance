@@ -9,6 +9,7 @@ import Link from "next/link";
 import { CreditCard, Landmark, PiggyBank, TrendingUp, Wallet, CircleHelp, X, ChevronUp, ChevronDown, Pencil, RotateCcw } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CustomSelect } from "@/components/ui/custom-select";
@@ -20,6 +21,11 @@ import { FloatingAddButton } from "@/components/ui/floating-add-button";
 
 interface Account {
   id: string;
+  household_id: string | null;
+  owner_user_id: string | null;
+  owner_display_name?: string | null;
+  visibility: "shared" | "private";
+  is_owner?: boolean;
   item_id: string | null;
   name: string;
   name_override: string | null;
@@ -96,6 +102,7 @@ export default function AccountsPage() {
 
   const [name, setName] = useState("");
   const [type, setType] = useState("depository");
+  const [visibility, setVisibility] = useState<"shared" | "private">("shared");
   const [balance, setBalance] = useState("");
   const [error, setError] = useState<string | null>(null);
   const balanceNum = balance.trim() === "" ? null : Number(balance);
@@ -126,10 +133,12 @@ export default function AccountsPage() {
         type,
         currentBalanceCents:
           balanceError || balanceNum === null ? null : Math.round(balanceNum * 100),
+        visibility,
       }),
     onSuccess: () => {
       setName("");
       setBalance("");
+      setVisibility("shared");
       setError(null);
       setShowAdd(false);
       invalidate();
@@ -170,6 +179,13 @@ export default function AccountsPage() {
     mutationFn: ({ id, type }: { id: string; type: string }) => api.patch(`/api/accounts/${id}`, { type }),
     onSuccess: () => { setActionError(null); invalidate(); },
     onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to update account type."),
+  });
+
+  const setAccountVisibility = useMutation({
+    mutationFn: ({ id, visibility }: { id: string; visibility: "shared" | "private" }) =>
+      api.patch(`/api/accounts/${id}`, { visibility }),
+    onSuccess: () => { setActionError(null); invalidate(); },
+    onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to update account privacy."),
   });
 
   const setDescription = useMutation({
@@ -258,6 +274,7 @@ export default function AccountsPage() {
               source,
               a.subtype ? a.subtype.replace(/-/g, " ") : null,
               a.mask ? `••••${a.mask}` : null,
+              !a.is_owner && a.owner_display_name ? `Owned by ${a.owner_display_name}` : null,
             ]
               .filter(Boolean)
               .join(" · ");
@@ -275,17 +292,26 @@ export default function AccountsPage() {
                           <Button type="submit" size="sm" disabled={rename.isPending}>Save</Button>
                         </form>
                       ) : (
-                        <button type="button" className="block max-w-full truncate text-left text-base font-semibold text-text hover:text-accent-text" onClick={() => { setEditingName(a.id); setNameDraft(a.name); }}>
+                        <button
+                          type="button"
+                          disabled={!a.is_owner}
+                          className="block max-w-full truncate text-left text-base font-semibold text-text enabled:hover:text-accent-text disabled:cursor-default"
+                          onClick={() => { setEditingName(a.id); setNameDraft(a.name); }}
+                        >
                           {a.name}
                         </button>
                       )}
                       <p className="mt-0.5 truncate text-xs text-text-muted">{detail}</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <Badge>{a.visibility === "private" ? "Private" : "Household"}</Badge>
+                        {!a.is_owner && <Badge>Shared with you</Badge>}
+                      </div>
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col">
                     <button
                       aria-label="Move up"
-                      disabled={i === 0 || reorder.isPending}
+                      disabled={!a.is_owner || i === 0 || reorder.isPending}
                       onClick={() => moveAccount(i, -1)}
                       className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-muted hover:text-text disabled:opacity-30"
                     >
@@ -293,7 +319,7 @@ export default function AccountsPage() {
                     </button>
                     <button
                       aria-label="Move down"
-                      disabled={i === data.accounts.length - 1 || reorder.isPending}
+                      disabled={!a.is_owner || i === data.accounts.length - 1 || reorder.isPending}
                       onClick={() => moveAccount(i, 1)}
                       className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-muted hover:text-text disabled:opacity-30"
                     >
@@ -320,15 +346,17 @@ export default function AccountsPage() {
                       </p>
                     )}
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-danger"
-                    disabled={remove.isPending}
-                    onClick={() => removeAccount(a)}
-                  >
-                    Remove
-                  </Button>
+                  {a.is_owner && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-danger"
+                      disabled={remove.isPending}
+                      onClick={() => removeAccount(a)}
+                    >
+                      Remove
+                    </Button>
+                  )}
                 </div>
                 {editingDesc === a.id ? (
                   <form
@@ -354,11 +382,12 @@ export default function AccountsPage() {
                 ) : (
                   <button
                     type="button"
+                    disabled={!a.is_owner}
                     onClick={() => {
                       setEditingDesc(a.id);
                       setDescDraft(a.description ?? "");
                     }}
-                    className="mt-3 flex w-full items-center gap-1.5 border-t border-border pt-3 text-left text-xs text-text-muted transition-colors hover:text-text"
+                    className="mt-3 flex w-full items-center gap-1.5 border-t border-border pt-3 text-left text-xs text-text-muted transition-colors enabled:hover:text-text disabled:cursor-default"
                   >
                     <Pencil size={12} className="shrink-0" />
                     <span className="truncate">{a.description ? `Notes: ${a.description}` : "Add a note about this account…"}</span>
@@ -370,15 +399,36 @@ export default function AccountsPage() {
                     value={a.type ?? "other"}
                     onChange={(value) => setTypeOverride.mutate({ id: a.id, type: value })}
                     options={TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t] }))}
+                    disabled={!a.is_owner}
                   />
                   <span className="self-center text-xs text-text-muted">
                     {isLiability(a) ? "Debt / liability — reduces net worth" : "Asset — increases net worth"}
                   </span>
                 </div>
+                <div className="mt-3 grid gap-2 border-t border-border pt-3 sm:grid-cols-2">
+                  <CustomSelect
+                    ariaLabel={`Visibility for ${a.name}`}
+                    value={a.visibility}
+                    onChange={(value) =>
+                      setAccountVisibility.mutate({
+                        id: a.id,
+                        visibility: value as "shared" | "private",
+                      })
+                    }
+                    options={[
+                      { value: "shared", label: "Household", hint: "Visible to household members" },
+                      { value: "private", label: "Private", hint: "Visible only to you" },
+                    ]}
+                    disabled={!a.is_owner}
+                  />
+                  <span className="self-center text-xs text-text-muted">
+                    {a.visibility === "private" ? "Only you can see this account." : "Included in household views."}
+                  </span>
+                </div>
                 <label
-                  className={`mt-3 flex cursor-pointer items-center gap-2 border-t border-border pt-3 text-xs transition-colors ${
-                    a.include_in_net_worth === 1 ? "text-text" : "text-text-muted"
-                  }`}
+                  className={`mt-3 flex items-center gap-2 border-t border-border pt-3 text-xs transition-colors ${
+                    a.is_owner ? "cursor-pointer" : "cursor-default"
+                  } ${a.include_in_net_worth === 1 ? "text-text" : "text-text-muted"}`}
                 >
                   <span
                     aria-hidden="true"
@@ -396,6 +446,7 @@ export default function AccountsPage() {
                     type="checkbox"
                     className="sr-only"
                     checked={a.include_in_net_worth === 1}
+                    disabled={!a.is_owner}
                     onChange={(e) => toggleNetWorth.mutate({ id: a.id, include: e.target.checked })}
                   />
                   Include in net worth on Home
@@ -510,6 +561,20 @@ export default function AccountsPage() {
                   value={type}
                   onChange={setType}
                   options={TYPES.map((t) => ({ value: t, label: TYPE_LABELS[t] }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-text-muted">
+                  Visibility
+                </label>
+                <CustomSelect
+                  ariaLabel="Account visibility"
+                  value={visibility}
+                  onChange={(value) => setVisibility(value as "shared" | "private")}
+                  options={[
+                    { value: "shared", label: "Household", hint: "Visible to household members" },
+                    { value: "private", label: "Private", hint: "Visible only to you" },
+                  ]}
                 />
               </div>
               <div>

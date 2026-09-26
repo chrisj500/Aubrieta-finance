@@ -18,6 +18,7 @@ const updateSchema = z.object({
   accountId: z.string().nullable().optional(),
   active: z.boolean().optional(),
   notes: z.string().max(500).nullable().optional(),
+  visibility: z.enum(["shared", "private"]).optional(),
 });
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {

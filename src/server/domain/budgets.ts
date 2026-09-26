@@ -4,10 +4,19 @@ import { assertValidCents } from "@/server/domain/money";
 import { getDb, type Db } from "@/server/db/registry";
 import { todayISO, addMonthsISO } from "@/server/domain/dates";
 import type { TransactionRow } from "@/server/domain/transactions";
+import {
+  accountReadScope,
+  assertObjectManageable,
+  getHouseholdContext,
+  objectReadScope,
+} from "@/server/authz/household-access";
 
 export interface BudgetRow {
   id: string;
   user_id: string;
+  household_id: string | null;
+  owner_user_id: string | null;
+  visibility: "shared" | "private";
   name: string;
   amount_cents: number;
   period: string;
@@ -128,24 +137,53 @@ async function spendFilter(
   end: string,
   includePending: boolean
 ): Promise<{ clause: string; params: unknown[] }> {
-  const cats = await db.all<{ category_id: string }>(
-    "SELECT category_id FROM budget_categories WHERE budget_id = ?",
-    budgetId
+  const budgetScope = await objectReadScope(db, userId, "b");
+  const budget = await db.get<{
+    household_id: string | null;
+    visibility: "shared" | "private";
+  }>(
+    `SELECT b.household_id, b.visibility FROM budgets b
+      WHERE b.id = ? AND ${budgetScope.clause}`,
+    budgetId,
+    ...budgetScope.params,
   );
-  const catIds = cats.map((c) => c.category_id);
+  if (!budget) throw apiErrors.notFound("Budget");
+
+  const cats = await db.all<{ name: string }>(
+    `SELECT c.name
+       FROM budget_categories bc
+       JOIN categories c ON c.id = bc.category_id
+      WHERE bc.budget_id = ?`,
+    budgetId,
+  );
+  const categoryNames = [...new Set(cats.map((c) => c.name.trim().toLowerCase()).filter(Boolean))];
+
+  let accountClause: string;
+  let params: unknown[];
+  if (budget.visibility === "shared" && budget.household_id) {
+    accountClause = "a.household_id = ? AND a.visibility = 'shared'";
+    params = [budget.household_id, start, end];
+  } else {
+    const accountScope = await accountReadScope(db, userId, "a");
+    accountClause = accountScope.clause;
+    params = [...accountScope.params, start, end];
+  }
 
   let categoryClause: string;
-  const params: unknown[] = [userId, start, end];
-  if (catIds.length === 0) {
+  if (categoryNames.length === 0) {
     categoryClause = "t.user_category_id IS NULL";
   } else {
-    categoryClause = `t.user_category_id IN (${catIds.map(() => "?").join(", ")})`;
-    params.push(...catIds);
+    categoryClause = `EXISTS (
+      SELECT 1 FROM categories tc
+       WHERE tc.id = t.user_category_id
+         AND lower(tc.name) IN (${categoryNames.map(() => "?").join(", ")})
+    )`;
+    params.push(...categoryNames);
   }
 
   const pendingClause = includePending ? "" : " AND t.pending = 0";
   return {
-    clause: `a.user_id = ? AND a.deleted_at IS NULL AND t.date >= ? AND t.date < ?
+    clause: `${accountClause} AND a.deleted_at IS NULL AND t.date >= ? AND t.date < ?
              AND t.exclude_from_budgets = 0 AND t.is_transfer = 0 AND t.amount_cents < 0${pendingClause}
              AND ${categoryClause}`,
     params,
@@ -189,9 +227,10 @@ export function createBudgetsService(db: Db = getDb()) {
       frame: BudgetFrame = { kind: "period" },
       includePending = true
     ): Promise<BudgetWithProgress[]> {
+      const scope = await objectReadScope(db, userId, "b");
       const budgets = await db.all<BudgetRow>(
-        "SELECT * FROM budgets WHERE user_id = ? ORDER BY created_at DESC",
-        userId
+        `SELECT b.* FROM budgets b WHERE ${scope.clause} ORDER BY b.created_at DESC`,
+        ...scope.params,
       );
       const result: BudgetWithProgress[] = [];
       for (const b of budgets) {
@@ -260,7 +299,12 @@ export function createBudgetsService(db: Db = getDb()) {
       frame: BudgetFrame = { kind: "period" },
       includePending = true
     ): Promise<TransactionRow[]> {
-      const budget = await db.get<BudgetRow>("SELECT * FROM budgets WHERE id = ? AND user_id = ?", budgetId, userId);
+      const scope = await objectReadScope(db, userId, "b");
+      const budget = await db.get<BudgetRow>(
+        `SELECT b.* FROM budgets b WHERE b.id = ? AND ${scope.clause}`,
+        budgetId,
+        ...scope.params,
+      );
       if (!budget) throw apiErrors.notFound("Budget");
       const { start, end } =
         frame.kind === "period" ? periodBounds(budget.period, referenceDate) : frameBounds(frame, referenceDate);
@@ -279,7 +323,13 @@ export function createBudgetsService(db: Db = getDb()) {
 
     async create(
       userId: string,
-      input: { name: string; amountCents: number; period?: string; categoryIds?: string[] }
+      input: {
+        name: string;
+        amountCents: number;
+        period?: string;
+        categoryIds?: string[];
+        visibility?: "shared" | "private";
+      }
     ): Promise<BudgetRow> {
       const period = input.period ?? "monthly";
       if (!["weekly", "monthly", "yearly"].includes(period)) {
@@ -291,15 +341,21 @@ export function createBudgetsService(db: Db = getDb()) {
       }
       assertValidCents(input.amountCents, "amountCents");
       const categoryIds = await assertOwnCategories(db, userId, input.categoryIds ?? []);
+      const household = await getHouseholdContext(db, userId);
       const id = randomUUID();
       await db.run(
-        "INSERT INTO budgets (id, user_id, name, amount_cents, period, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        `INSERT INTO budgets
+           (id, user_id, household_id, owner_user_id, visibility, name, amount_cents, period, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         userId,
+        household?.householdId ?? null,
+        userId,
+        input.visibility ?? "shared",
         input.name.trim(),
         input.amountCents,
         period,
-        now()
+        now(),
       );
       for (const catId of categoryIds) {
         await db.run(
@@ -316,9 +372,16 @@ export function createBudgetsService(db: Db = getDb()) {
     async update(
       userId: string,
       id: string,
-      input: { name?: string; amountCents?: number; period?: string; categoryIds?: string[] }
+      input: {
+        name?: string;
+        amountCents?: number;
+        period?: string;
+        categoryIds?: string[];
+        visibility?: "shared" | "private";
+      }
     ): Promise<BudgetRow> {
-      const existing = await db.get<BudgetRow>("SELECT * FROM budgets WHERE id = ? AND user_id = ?", id, userId);
+      await assertObjectManageable(db, userId, "budgets", id);
+      const existing = await db.get<BudgetRow>("SELECT * FROM budgets WHERE id = ?", id);
       if (!existing) throw apiErrors.notFound("Budget");
       const name = input.name?.trim() ?? existing.name;
       if (!name) throw apiErrors.badRequest("name cannot be empty");
@@ -337,11 +400,12 @@ export function createBudgetsService(db: Db = getDb()) {
         ? await assertOwnCategories(db, userId, input.categoryIds)
         : null;
       await db.run(
-        "UPDATE budgets SET name = ?, amount_cents = ?, period = ? WHERE id = ?",
+        "UPDATE budgets SET name = ?, amount_cents = ?, period = ?, visibility = ? WHERE id = ?",
         name,
         amountCents,
         period,
-        id
+        input.visibility ?? existing.visibility,
+        id,
       );
       if (categoryIds) {
         await db.run("DELETE FROM budget_categories WHERE budget_id = ?", id);
@@ -355,8 +419,7 @@ export function createBudgetsService(db: Db = getDb()) {
     },
 
     async remove(userId: string, id: string): Promise<void> {
-      const existing = await db.get<BudgetRow>("SELECT * FROM budgets WHERE id = ? AND user_id = ?", id, userId);
-      if (!existing) throw apiErrors.notFound("Budget");
+      await assertObjectManageable(db, userId, "budgets", id);
       await db.run("DELETE FROM budget_categories WHERE budget_id = ?", id);
       await db.run("DELETE FROM budgets WHERE id = ?", id);
     },

@@ -7,6 +7,7 @@ import { realPlaidClient } from "./real";
 import { createSyncService } from "./sync";
 import { createPlaidProvider, legacyAccountType, type PlaidConnectionSecret } from "@/server/providers/plaid";
 import { ensureAccountProviderRef, ensureProviderConnection } from "@/server/providers/connections";
+import { getHouseholdContext } from "@/server/authz/household-access";
 
 export interface PlaidCredentialRow {
   id: string;
@@ -64,14 +65,16 @@ export function createPlaidService(db: Db = getDb(), clientFactory: (creds: Plai
       legacyPlaidItemId: input.itemRowId,
     });
     const secret: PlaidConnectionSecret = { creds: input.creds, accessToken: input.accessToken };
+    const household = await getHouseholdContext(db, input.userId);
     const accounts = await provider.listAccounts(secret);
 
     for (const a of accounts) {
       const legacyType = legacyAccountType(a.type);
       await db.run(
-        `INSERT INTO accounts (id, user_id, item_id, plaid_account_id, name, official_name, type, subtype, mask,
+        `INSERT INTO accounts (id, user_id, household_id, owner_user_id, visibility,
+                               item_id, plaid_account_id, name, official_name, type, subtype, mask,
                                current_balance_cents, available_balance_cents, currency, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, 'shared', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(plaid_account_id) DO UPDATE SET
            item_id = excluded.item_id,
            name = CASE WHEN accounts.name_override IS NULL THEN excluded.name ELSE accounts.name END,
@@ -84,6 +87,8 @@ export function createPlaidService(db: Db = getDb(), clientFactory: (creds: Plai
            currency = excluded.currency,
            deleted_at = NULL`,
         randomUUID(),
+        input.userId,
+        household?.householdId ?? null,
         input.userId,
         input.itemRowId,
         a.externalId,

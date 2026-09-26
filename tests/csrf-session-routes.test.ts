@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import { getSqliteDb } from "@/server/db/adapter";
+import { getDb, getSqliteDb } from "@/server/db/adapter";
+import { createHouseholdService } from "@/server/domain/households";
 import { registerLimiter, sensitiveLimiter } from "@/server/auth/service";
 import { POST as onboardingPost } from "@/app/api/onboarding/route";
 import { POST as registerPost } from "@/app/api/auth/register/route";
@@ -49,8 +50,15 @@ beforeEach(() => {
 
 async function sessionCookie(): Promise<string> {
   const uname = `csrf-r-${Math.random().toString(36).slice(2, 9)}`;
+  const db = getDb();
+  const owner = await db.get<{ id: string }>(
+    "SELECT id FROM users WHERE is_demo = 0 AND username IS NOT NULL ORDER BY created_at LIMIT 1"
+  );
+  const inviteToken = owner
+    ? (await createHouseholdService(db).createInvitation(owner.id)).token
+    : undefined;
   const r = await registerPost(
-    jsonReq(`${BASE}/api/auth/register`, { username: uname, display_name: "x", password: "csrf-r-strong-pass" }, { "x-forwarded-for": "10.9.99.1" })
+    jsonReq(`${BASE}/api/auth/register`, { username: uname, display_name: "x", password: "csrf-r-strong-pass", inviteToken }, { "x-forwarded-for": "10.9.99.1" })
   );
   expect(r.status).toBe(201);
   const m = (r.headers.get("set-cookie") ?? "").match(/of_session=([^;]+)/);

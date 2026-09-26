@@ -16,6 +16,7 @@ const updateSchema = z.object({
   ).optional(),
   period: z.enum(["weekly", "monthly", "yearly"]).optional(),
   categoryIds: z.array(z.string()).optional(),
+  visibility: z.enum(["shared", "private"]).optional(),
 });
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {

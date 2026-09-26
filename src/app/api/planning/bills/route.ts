@@ -20,6 +20,7 @@ const createSchema = z.object({
   accountId: z.string().nullable().optional(),
   active: z.boolean().optional(),
   notes: z.string().max(500).nullable().optional(),
+  visibility: z.enum(["shared", "private"]).optional(),
   transactionId: z.string().nullable().optional(),
 });
 

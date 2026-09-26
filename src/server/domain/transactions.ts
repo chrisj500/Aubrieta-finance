@@ -3,6 +3,7 @@ import { apiErrors } from "@/lib/api-error";
 import { getDb, type Db } from "@/server/db/registry";
 import { createCategoriesService } from "@/server/domain/categories";
 import { assertValidCents } from "@/server/domain/money";
+import { accountReadScope, assertAccountReadable } from "@/server/authz/household-access";
 
 export interface TransactionRow {
   id: string;
@@ -49,8 +50,9 @@ function now(): string {
 export function createTransactionsService(db: Db = getDb()) {
   return {
     async list(userId: string, f: TransactionFilters): Promise<{ rows: TransactionRow[]; total: number }> {
-      const where: string[] = ["a.user_id = ?", "a.deleted_at IS NULL"];
-      const params: unknown[] = [userId];
+      const scope = await accountReadScope(db, userId, "a");
+      const where: string[] = [scope.clause, "a.deleted_at IS NULL"];
+      const params: unknown[] = [...scope.params];
       if (f.accountId) {
         where.push("t.account_id = ?");
         params.push(f.accountId);
@@ -118,14 +120,15 @@ export function createTransactionsService(db: Db = getDb()) {
     },
 
     async get(userId: string, id: string): Promise<TransactionRow> {
+      const scope = await accountReadScope(db, userId, "a");
       const row = await db.get<TransactionRow>(
         `SELECT t.*, a.name AS account_name, c.name AS category_name, c.color AS category_color
            FROM transactions t
            JOIN accounts a ON a.id = t.account_id
            LEFT JOIN categories c ON c.id = t.user_category_id
-          WHERE t.id = ? AND a.user_id = ? AND a.deleted_at IS NULL`,
+          WHERE t.id = ? AND ${scope.clause} AND a.deleted_at IS NULL`,
         id,
-        userId
+        ...scope.params,
       );
       if (!row) throw apiErrors.notFound("Transaction");
       return row;
@@ -143,12 +146,7 @@ export function createTransactionsService(db: Db = getDb()) {
         excludeFromBudgets?: boolean;
       }
     ): Promise<TransactionRow> {
-      const account = await db.get<{ id: string }>(
-        "SELECT id FROM accounts WHERE id = ? AND user_id = ?",
-        input.accountId,
-        userId
-      );
-      if (!account) throw apiErrors.notFound("Account");
+      await assertAccountReadable(db, userId, input.accountId);
       if (!Number.isInteger(input.amountCents) || input.amountCents === 0) {
         throw apiErrors.badRequest("Amount must be a non-zero whole number of cents.");
       }
@@ -235,8 +233,7 @@ export function createTransactionsService(db: Db = getDb()) {
           await db.run("UPDATE transactions SET date = ? WHERE id = ?", input.date, id);
         }
         if (input.accountId !== undefined) {
-          const account = await db.get("SELECT id FROM accounts WHERE id = ? AND user_id = ?", input.accountId, userId);
-          if (!account) throw apiErrors.notFound("Account");
+          await assertAccountReadable(db, userId, input.accountId);
           await db.run("UPDATE transactions SET account_id = ? WHERE id = ?", input.accountId, id);
         }
       }
@@ -260,18 +257,19 @@ export function createTransactionsService(db: Db = getDb()) {
         if (!cat) throw apiErrors.badRequest("That category does not exist.");
       }
       const placeholders = cleanIds.map(() => "?").join(", ");
-      // Only touch transactions that still need review (Plaid-sourced, uncategorized).
-      // Ids come straight from the request body, so the UPDATE must be scoped to
-      // this user's accounts — transactions carry no user_id of their own
-      // (ownership is via accounts). Without the subquery an authenticated user
-      // could pass another user's transaction ids and recategorize their rows.
+      const scope = await accountReadScope(db, userId, "a");
+      // Transactions inherit account access. Shared accounts are editable by
+      // household members; another member's private account never enters this subquery.
       const res = await db.run(
         `UPDATE transactions SET user_category_id = ?
           WHERE id IN (${placeholders}) AND user_category_id IS NULL AND source != 'manual'
-            AND account_id IN (SELECT id FROM accounts WHERE user_id = ? AND deleted_at IS NULL)`,
+            AND account_id IN (
+              SELECT a.id FROM accounts a
+               WHERE ${scope.clause} AND a.deleted_at IS NULL
+            )`,
         userCategoryId,
         ...cleanIds,
-        userId,
+        ...scope.params,
       );
       return res.changes ?? 0;
     },

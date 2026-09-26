@@ -53,8 +53,17 @@ export async function syncProviderLiabilities(
   liabilities: ProviderLiability[],
 ): Promise<LiabilitySyncResult> {
   const ts = now();
-  const refs = await db.all<{ account_id: string; external_account_id: string; name: string }>(
-    `SELECT r.account_id, r.external_account_id, a.name
+  const refs = await db.all<{
+    account_id: string;
+    external_account_id: string;
+    name: string;
+    household_id: string | null;
+    owner_user_id: string | null;
+    account_user_id: string;
+    visibility: "shared" | "private";
+  }>(
+    `SELECT r.account_id, r.external_account_id, a.name, a.household_id,
+            a.owner_user_id, a.user_id AS account_user_id, a.visibility
        FROM account_provider_refs r
        JOIN accounts a ON a.id = r.account_id
       WHERE r.user_id = ? AND r.connection_id = ? AND r.provider = ?`,
@@ -171,7 +180,8 @@ export async function syncProviderLiabilities(
           await db.run(
             `UPDATE bills SET
                name = ?, amount_cents = ?, frequency = 'monthly',
-               due_day = ?, next_due_date = ?, account_id = ?, active = 1,
+               due_day = ?, next_due_date = ?, account_id = ?,
+               household_id = ?, owner_user_id = ?, visibility = ?, active = 1,
                notes = ?, source = 'provider', source_confidence = 'confirmed',
                updated_at = ?
              WHERE id = ?`,
@@ -180,6 +190,9 @@ export async function syncProviderLiabilities(
             dueDay,
             dueDate,
             account.account_id,
+            account.household_id,
+            account.owner_user_id ?? account.account_user_id,
+            account.visibility,
             billNotes(liability),
             ts,
             existingBill.id,
@@ -197,12 +210,16 @@ export async function syncProviderLiabilities(
       } else {
         await db.run(
           `INSERT INTO bills (
-             id, user_id, name, amount_cents, frequency, due_day, next_due_date,
+             id, user_id, household_id, owner_user_id, visibility,
+             name, amount_cents, frequency, due_day, next_due_date,
              last_paid_amount_cents, category_id, account_id, active, notes,
              created_at, updated_at, provider_liability_id, source, source_confidence
-           ) VALUES (?, ?, ?, ?, 'monthly', ?, ?, ?, NULL, ?, 1, ?, ?, ?, ?, 'provider', 'confirmed')`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'monthly', ?, ?, ?, NULL, ?, 1, ?, ?, ?, ?, 'provider', 'confirmed')`,
           randomUUID(),
           userId,
+          account.household_id,
+          account.owner_user_id ?? account.account_user_id,
+          account.visibility,
           name,
           amount,
           dueDay,

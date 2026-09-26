@@ -40,6 +40,8 @@ export default function RegisterPage() {
   const [busy, setBusy] = useState(false);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteHousehold, setInviteHousehold] = useState<string | null>(null);
   const passwordError = !solo ? registerPasswordError(password, username) : null;
 
   async function copyRecovery() {
@@ -54,9 +56,16 @@ export default function RegisterPage() {
   }
 
   useEffect(() => {
-    if (hasWindow()) {
-      setSolo(isSoloCandidate(window.location.origin));
-    }
+    if (!hasWindow()) return;
+    setSolo(isSoloCandidate(window.location.origin));
+    const token = new URLSearchParams(window.location.search).get("invite");
+    if (!token) return;
+    setInviteToken(token);
+    api.get<{ invitation: { householdName: string } }>(
+      `/api/household/invite?token=${encodeURIComponent(token)}`,
+    )
+      .then((r) => setInviteHousehold(r.invitation.householdName))
+      .catch((e) => setError(e instanceof Error ? e.message : "This invitation is invalid."));
   }, []);
 
 
@@ -74,7 +83,13 @@ export default function RegisterPage() {
         );
         setRecoveryCode(res.recoveryCode);
       } else {
-        await api.post("/api/auth/register", { username, display_name: displayName, password, device_label: "Web browser" });
+        await api.post("/api/auth/register", {
+          username,
+          display_name: displayName,
+          password,
+          inviteToken: inviteToken ?? undefined,
+          device_label: "Web browser",
+        });
         try { localStorage.setItem("of-has-account", "1"); } catch { /* private mode */ }
         router.push("/dashboard");
         router.refresh();
@@ -142,12 +157,16 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-bold text-text">
-            {solo ? "Set up this phone" : "Create your account"}
+            {solo ? "Set up this phone" : inviteToken ? "Join your household" : "Create your account"}
           </h1>
           <p className="mt-1 text-sm text-text-muted">
             {solo
               ? "Runs fully on this device — no server, no hub. You can connect a hub later."
-              : "Runs entirely on your machine."}
+              : inviteHousehold
+                ? `Create your own login to join ${inviteHousehold}.`
+                : inviteToken
+                  ? "Create your own login to accept this household invitation."
+                  : "Runs entirely on your machine."}
           </p>
         </div>
         <div className="mb-4">
@@ -227,4 +246,3 @@ export default function RegisterPage() {
     </main>
   );
 }
-

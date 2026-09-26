@@ -20,6 +20,7 @@ import { POST as pairingAcceptPost } from "@/app/api/pairing/accept/route";
 import { POST as bootstrapPost } from "@/app/api/phone-import/bootstrap/route";
 import { PATCH as passwordPatch } from "@/app/api/auth/password/route";
 import { GET as detectGet } from "@/app/api/agents/detect/route";
+import { createHouseholdService } from "@/server/domain/households";
 
 /**
  * Rate-limit coverage on the REAL route handlers (practice-not-theory):
@@ -75,8 +76,15 @@ beforeEach(() => {
 });
 
 async function registerViaRoute(username: string, password: string, ip: string): Promise<string> {
+  const db = getDb();
+  const owner = await db.get<{ id: string }>(
+    "SELECT id FROM users WHERE is_demo = 0 AND username IS NOT NULL ORDER BY created_at LIMIT 1"
+  );
+  const inviteToken = owner
+    ? (await createHouseholdService(db).createInvitation(owner.id)).token
+    : undefined;
   const res = await registerPost(
-    jsonReq(`${BASE}/api/auth/register`, { username, display_name: username, password }, { "x-forwarded-for": ip })
+    jsonReq(`${BASE}/api/auth/register`, { username, display_name: username, password, inviteToken }, { "x-forwarded-for": ip })
   );
   expect(res.status).toBe(201);
   const m = (res.headers.get("set-cookie") ?? "").match(/of_session=([^;]+)/);
