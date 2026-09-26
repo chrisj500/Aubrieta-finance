@@ -61,7 +61,7 @@ export default function Home() {
         <div className="mx-auto mb-4 w-fit">
           <LogoMark size={52} />
         </div>
-        <h1 className="text-3xl font-bold tracking-tight">Open Finance</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Aubrieta</h1>
         <p className="mx-auto mt-2 max-w-sm text-sm text-text-muted">
           The finance app that lets you <strong className="text-text">bring your own agent</strong> — and asks
           permission before it looks anywhere. Self-hosted, open source, MIT.
