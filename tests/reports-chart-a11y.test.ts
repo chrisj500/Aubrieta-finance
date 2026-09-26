@@ -9,7 +9,7 @@ describe("reports charts have accessible names (WCAG 1.1.1)", () => {
     expect(src).toMatch(/aria-label=\{`Spending by category bar chart for \$\{monthLabel\}/);
   });
   it("cash flow bar chart carries a role=img label", () => {
-    expect(src).toMatch(/aria-label="Cash flow bar chart/);
+    expect(src).toMatch(/aria-label=\{`Cash flow bar chart/);
   });
   it("projection line chart carries a role=img label", () => {
     expect(src).toMatch(/aria-label="Projected balance line chart/);
