@@ -12,6 +12,7 @@ const patchSchema = z.object({
   type: z.enum(["depository", "credit", "investment", "loan", "other"]).optional(),
   includeInNetWorth: z.boolean().optional(),
   description: z.string().max(300).nullable().optional(),
+  visibility: z.enum(["shared", "private"]).optional(),
 });
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -26,9 +27,11 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         ? await svc.setDescription(session.userId, id, body.description)
         : body.type !== undefined
           ? await svc.setType(session.userId, id, body.type)
-          : body.includeInNetWorth !== undefined
-            ? await svc.setNetWorthInclusion(session.userId, id, body.includeInNetWorth)
-            : await svc.rename(session.userId, id, body.name as string);
+          : body.visibility !== undefined
+            ? await svc.setVisibility(session.userId, id, body.visibility)
+            : body.includeInNetWorth !== undefined
+              ? await svc.setNetWorthInclusion(session.userId, id, body.includeInNetWorth)
+              : await svc.rename(session.userId, id, body.name as string);
     return ok({ account });
   })(req, ctx);
 }
