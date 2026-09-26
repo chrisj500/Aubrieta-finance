@@ -48,5 +48,3 @@ describe("M4.5 Goals experience", () => {
     expect(src).toContain('complete ? "Complete"');
   });
 });
-
-[executed on device: aubrieta (7aba6798-e9cc-49d5-b00e-694dfe832d6e)]
