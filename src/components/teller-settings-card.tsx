@@ -110,6 +110,7 @@ export function TellerSettingsCard({
       setConnectConfig(null);
       setMsg(`Teller connected — ${result.accountCount} account(s), ${result.synced} transaction(s) synced.`);
       qc.invalidateQueries({ queryKey: ["teller-connections"] });
+      qc.invalidateQueries({ queryKey: ["connection-health"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["summary"] });
@@ -124,6 +125,7 @@ export function TellerSettingsCard({
     onSuccess: () => {
       setMsg("Teller connection removed. Existing transaction history was retained where possible.");
       qc.invalidateQueries({ queryKey: ["teller-connections"] });
+      qc.invalidateQueries({ queryKey: ["connection-health"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
     },
     onError: (e) => setErr(e instanceof Error ? e.message : "Could not remove Teller connection."),
@@ -132,7 +134,7 @@ export function TellerSettingsCard({
   const configured = creds.data?.environments.find((e) => e.environment === environment);
 
   return (
-    <Card className="lg:col-span-2">
+    <Card className="lg:col-span-2" id="provider-teller">
       <CardTitle>Teller connections</CardTitle>
       <p className="mt-1 text-sm text-text-muted">
         Optional second bank-data provider. Teller supports balances and categorized transactions; development connects
