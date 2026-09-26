@@ -475,7 +475,7 @@ export default function BudgetsPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <CardTitle>
-              {frame === "period" ? "This month's pool" : `${FRAME_LABELS[frame]} pool`}
+              Cash flow in view
             </CardTitle>
             <p className="mt-1 text-xs text-text-muted">
               Income minus spending in this view. This is cash-flow context, not an estimate of money available after future bills.
