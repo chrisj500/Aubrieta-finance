@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 const root = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
 
-const page = read("src/app/(app)/accounts/[id]/page.tsx");
+const page = read("src/components/account-detail/account-detail-view.tsx");
+const dynamicPage = read("src/app/(app)/accounts/[id]/page.tsx");
+const staticPage = read("src/app/(app)/account/page.tsx");
+const staticQuery = read("src/components/account-detail/account-detail-query.tsx");
+const href = read("src/lib/account-detail-href.ts");
 const accounts = read("src/app/(app)/accounts/page.tsx");
 const route = read("src/app/api/accounts/[id]/route.ts");
 const transactions = read("src/app/(app)/transactions/page.tsx");
@@ -13,8 +17,19 @@ const solo = read("src/lib/solo-router.ts");
 
 describe("M4.8 Account Detail experience", () => {
   it("makes account names deep-link to per-account detail", () => {
-    expect(accounts).toContain('href={`/accounts/${a.id}`}');
+    expect(accounts).toContain("href={accountDetailHref(a.id)}");
+    expect(href).toContain('process.env.NEXT_PUBLIC_SOLO_BUILD === "1"');
+    expect(href).toContain('`/account?id=${encoded}`');
+    expect(href).toContain('`/accounts/${encoded}`');
     expect(accounts).toContain('aria-label={`Rename ${a.name}`}');
+  });
+
+
+  it("shares one detail implementation across server and static mobile/PWA entry points", () => {
+    expect(dynamicPage).toContain("<AccountDetailView id={params.id} />");
+    expect(staticPage).toContain("<AccountDetailFromQuery />");
+    expect(staticQuery).toContain('params.get("id")');
+    expect(staticQuery).toContain("<AccountDetailView id={id} />");
   });
 
   it("renders summary, balance history, and recent activity", () => {

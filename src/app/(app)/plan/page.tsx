@@ -1038,10 +1038,10 @@ export default function PlanPage() {
                   {b.source !== "provider" && (
                     <button
                       onClick={() => removeBill.mutate(b)}
-                      className="text-text-muted hover:text-danger"
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-danger"
                       aria-label={`Delete bill ${b.name}`}
                     >
-                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                      <X className="h-4 w-4" aria-hidden="true" />
                     </button>
                   )}
                 </div>
@@ -1065,10 +1065,10 @@ export default function PlanPage() {
                     <Money cents={d.principal_cents} />
                     <button
                       onClick={() => removeDebt.mutate(d)}
-                      className="text-text-muted hover:text-danger"
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-danger"
                       aria-label={`Delete debt ${d.name}`}
                     >
-                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                      <X className="h-4 w-4" aria-hidden="true" />
                     </button>
                   </div>
                 </div>
@@ -1103,10 +1103,10 @@ export default function PlanPage() {
                 </div>
                 <button
                   onClick={() => removeGoal.mutate(g)}
-                  className="text-text-muted hover:text-danger"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-danger"
                   aria-label={`Delete expense ${g.name}`}
                 >
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  <X className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
               <p className="mt-1.5 text-xs text-text-muted">

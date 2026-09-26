@@ -221,7 +221,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <main
           id="main-content"
           tabIndex={-1}
-          className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-24 pt-4 outline-none md:p-8"
+          className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-4 outline-none md:p-8"
         >
           <header className="mb-4 flex items-center gap-3 md:mb-6">
             <span

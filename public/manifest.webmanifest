@@ -1,7 +1,9 @@
 {
-  "name": "Open Finance",
-  "short_name": "Open Finance",
+  "name": "Aubrieta",
+  "short_name": "Aubrieta",
   "description": "Self-hosted, open-source personal finance app. Bring your own Plaid keys — or track manually. Bring your own agent.",
+  "lang": "en-US",
+  "categories": ["finance", "productivity"],
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0C0A09",

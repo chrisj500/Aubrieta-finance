@@ -16,26 +16,38 @@ const schema = z.object({
   general: z.string().max(MANUAL_MAX_LEN).optional(),
 });
 
+async function readManual(userId: string, req: NextRequest) {
+  const manual = await createAgentManualService(getDb()).get(userId);
+  // ?since=<version> — cheap change check: unchanged → changed:false, no text.
+  const sinceRaw = req.nextUrl.searchParams.get("since");
+  const since = sinceRaw !== null && !Number.isNaN(Number(sinceRaw)) ? Number(sinceRaw) : undefined;
+  if (since !== undefined && since === manual.version) {
+    return ok({ changed: false, version: manual.version });
+  }
+  return ok({ changed: true, version: manual.version, manual });
+}
+
 /**
- * GET /api/agent/manual — the user's live AI steering manual (D11). Always
- * available to the agent (Bearer token); the agent reads this on every poll via
- * the read_agent_manual MCP tool so guidance updates need no agent-config edits.
+ * GET /api/agent/manual — the user's live AI steering manual (D11).
+ *
+ * Agents read with a Bearer token on every poll. The human-facing Agents page
+ * reads the same resource with the user's session cookie, so the editor does
+ * not need a second endpoint and a scope-free agent 401 cannot be mistaken for
+ * an expired user session by the shared API client.
  */
 export async function GET(req: NextRequest) {
+  const raw = bearerToken(req);
+  if (!raw) {
+    return route(async (req) => {
+      const session = await requireSession(req);
+      return readManual(session.userId, req);
+    })(req, { params: Promise.resolve({}) });
+  }
+
   return agentRoute(async (req) => {
-    const raw = bearerToken(req);
-    if (!raw) throw apiErrors.unauthorized();
     const token = await createAgentTokenService(getDb()).authenticate(raw);
     if (!token) throw apiErrors.unauthorized();
-    const svc = createAgentManualService(getDb());
-    const manual = await svc.get(token.user_id);
-    // ?since=<version> — cheap change check: unchanged → changed:false, no text.
-    const sinceRaw = req.nextUrl.searchParams.get("since");
-    const since = sinceRaw !== null && !Number.isNaN(Number(sinceRaw)) ? Number(sinceRaw) : undefined;
-    if (since !== undefined && since === manual.version) {
-      return ok({ changed: false, version: manual.version });
-    }
-    return ok({ changed: true, version: manual.version, manual });
+    return readManual(token.user_id, req);
   })(req, { params: Promise.resolve({}) });
 }
 
