@@ -9,7 +9,7 @@ import { InsecureHubWarning } from "@/components/insecure-hub-warning";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Open Finance",
+  title: "Aubrieta",
   description:
     "Self-hosted, open-source personal finance app. Bring your own Plaid keys — or track manually. Bring your own agent.",
   manifest: "/manifest.webmanifest",
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: "Open Finance",
+    title: "Aubrieta",
     statusBarStyle: "default",
   },
 };
