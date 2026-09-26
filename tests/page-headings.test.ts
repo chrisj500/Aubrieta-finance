@@ -8,11 +8,15 @@ const read = (p: string) => readFileSync(join(root, p), "utf8");
 // Every main page needs a per-page heading so screen-reader / heading-navigation
 // users hear the current section name. The app-shell header <h1> shows the user's
 // display name on every route, so these sr-only page headings are what actually
-// announce "Dashboard / Transactions / Budgets / Reports / Plan / Settings".
-// (accounts + agents already had visible <h1>s; the other six were missing one.)
+// announce the current section, including the visible Overview heading.
+// (accounts + agents already have visible headings; remaining legacy pages keep sr-only headings for now.)
 describe("main pages expose a per-page heading", () => {
+  it("overview page has a visible page heading", () => {
+    const src = read("src/app/(app)/dashboard/page.tsx");
+    expect(src).toContain('title="Overview"');
+  });
+
   const cases: Array<[string, string]> = [
-    ["dashboard", "src/app/(app)/dashboard/page.tsx"],
     ["transactions", "src/app/(app)/transactions/page.tsx"],
     ["budgets", "src/app/(app)/budgets/page.tsx"],
     ["reports", "src/app/(app)/reports/page.tsx"],
