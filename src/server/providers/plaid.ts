@@ -82,6 +82,7 @@ export function createPlaidProvider(client: PlaidClient): FinancialProvider {
         "balances",
         "transactions",
         "liabilities",
+        "investments",
         "recurring",
         "refresh",
         "reauth",
@@ -138,6 +139,32 @@ export function createPlaidProvider(client: PlaidClient): FinancialProvider {
         lastPaymentDate: l.lastPaymentDate,
         rawStatus: l.rawStatus,
       }));
+    },
+
+    async getInvestments(connectionSecret) {
+      const { creds, accessToken } = asPlaidSecret(connectionSecret);
+      if (!client.getInvestments) return { securities: [], holdings: [] };
+      const investments = await client.getInvestments(creds, accessToken);
+      return {
+        securities: investments.securities.map((s) => ({
+          externalId: s.id,
+          name: s.name,
+          ticker: s.ticker,
+          isin: s.isin,
+          cusip: s.cusip,
+          type: s.type,
+          currency: s.currency,
+        })),
+        holdings: investments.holdings.map((h) => ({
+          accountExternalId: h.accountId,
+          securityExternalId: h.securityId,
+          quantity: h.quantity,
+          institutionPriceMinor: h.institutionPriceCents,
+          institutionValueMinor: h.institutionValueCents,
+          costBasisMinor: h.costBasisCents,
+          currency: h.currency,
+        })),
+      };
     },
 
     async getRecurringStreams(connectionSecret): Promise<ProviderRecurringStream[]> {
