@@ -1,5 +1,6 @@
 import { randomUUID } from "@/lib/uuid";
 import type { Db } from "@/server/db/types";
+import { getHouseholdContext } from "@/server/authz/household-access";
 import type { FinancialProvider, ProviderKind } from "./types";
 
 function now(): string {
@@ -35,13 +36,15 @@ export async function ensureProviderConnection(
       : undefined;
   const id = existing?.id ?? randomUUID();
   const ts = now();
+  const household = await getHouseholdContext(db, input.userId);
   const capabilities = JSON.stringify([...input.provider.descriptor.capabilities].sort());
 
   if (existing) {
     await db.run(
       `UPDATE provider_connections SET
          external_connection_id = ?, institution_external_id = ?, institution_name = ?,
-         status = ?, capabilities_json = ?, environment = COALESCE(?, environment), updated_at = ?
+         status = ?, capabilities_json = ?, environment = COALESCE(?, environment),
+         household_id = COALESCE(?, household_id), updated_at = ?
        WHERE id = ? AND user_id = ?`,
       input.externalConnectionId,
       input.institutionExternalId,
@@ -49,6 +52,7 @@ export async function ensureProviderConnection(
       input.status ?? "active",
       capabilities,
       input.environment ?? null,
+      household?.householdId ?? null,
       ts,
       id,
       input.userId,
@@ -56,12 +60,13 @@ export async function ensureProviderConnection(
   } else {
     await db.run(
       `INSERT INTO provider_connections (
-         id, user_id, provider, external_connection_id, institution_external_id,
+         id, user_id, household_id, provider, external_connection_id, institution_external_id,
          institution_name, status, capabilities_json, environment, legacy_plaid_item_id,
          created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       input.userId,
+      household?.householdId ?? null,
       input.provider.descriptor.kind,
       input.externalConnectionId,
       input.institutionExternalId,

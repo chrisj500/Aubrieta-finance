@@ -65,6 +65,7 @@ export const AGENT_ROUTES: RouteEntry[] = [
 
 export const USER_ONLY_ROUTES: string[] = [
   "/api/auth/*",
+  "/api/admin/*",
   "/api/health",
   "/api/hub/*",
   "/api/household/*",

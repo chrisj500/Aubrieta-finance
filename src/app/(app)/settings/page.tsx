@@ -27,6 +27,7 @@ import { TellerSettingsCard } from "@/components/teller-settings-card";
 import { SimpleFinSettingsCard } from "@/components/simplefin-settings-card";
 import { AkoyaSettingsCard } from "@/components/akoya-settings-card";
 import { HouseholdSettingsCard } from "@/components/household-settings-card";
+import { InstanceAdminCard } from "@/components/instance-admin-card";
 
 // Inline fetch-failure surface for a settings sub-card query: a calm alert + retry,
 // shown only when the query errored AND has no data (a background refetch error never
@@ -309,6 +310,12 @@ export default function SettingsPage() {
       {!solo && (
         <SettingsGroup title="Household" description="Members, invitations, and shared finance access.">
           <HouseholdSettingsCard setMsg={setMsg} setErr={setErr} />
+        </SettingsGroup>
+      )}
+
+      {!solo && (
+        <SettingsGroup title="Server" description="Instance-level household provisioning and administration.">
+          <InstanceAdminCard setMsg={setMsg} setErr={setErr} />
         </SettingsGroup>
       )}
 
@@ -2017,6 +2024,11 @@ function BackupPanel({ setMsg, setErr }: { setMsg: (s: string | null) => void; s
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [solo, setSolo] = useState(false);
+  const instanceStatus = useQuery({
+    queryKey: ["instance-admin-status"],
+    queryFn: () => api.get<{ isInstanceAdmin: boolean }>("/api/admin/status"),
+    enabled: hasWindow() && !isSoloCandidate(window.location.origin),
+  });
 
   useEffect(() => {
     if (hasWindow()) {
@@ -2071,6 +2083,19 @@ function BackupPanel({ setMsg, setErr }: { setMsg: (s: string | null) => void; s
   }
 
   if (solo) return <SoloBackupPanel setMsg={setMsg} setErr={setErr} />;
+  if (instanceStatus.isLoading) {
+    return <Card className="lg:col-span-2"><div className="skeleton h-28" /></Card>;
+  }
+  if (instanceStatus.data?.isInstanceAdmin !== true) {
+    return (
+      <Card className="lg:col-span-2">
+        <CardTitle>Backup &amp; restore</CardTitle>
+        <p className="mt-1 text-sm text-text-muted">
+          Whole-instance backups contain every hosted household and are restricted to the Aubrieta instance administrator. Household-level export and restore can be added independently later without weakening tenant isolation.
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <Card className="lg:col-span-2">

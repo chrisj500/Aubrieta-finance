@@ -38,6 +38,16 @@
 - account visibility
 - household budgets/goals/bills/net worth
 
+## M3.5 — Multi-household hosting foundation
+- multiple independent households on one Aubrieta instance
+- one household per user remains enforced
+- instance administrator is separate from household ownership
+- instance-admin household provisioning with first-owner invitations
+- tenant-scoped provider connections/background sync validation
+- cross-household finance and agent isolation regression coverage
+- whole-instance backup/restore restricted to instance administrators
+- household-level export/restore reserved for a later milestone
+
 ## M4 — Aubrieta experience
 - Aubrieta design system
 - Overview
