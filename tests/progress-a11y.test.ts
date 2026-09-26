@@ -29,7 +29,7 @@ describe("Progress a11y (WAI-ARIA progressbar)", () => {
 
   it("plan goals pass a per-goal label", () => {
     const src = read("src/app/(app)/plan/page.tsx");
-    expect(src).toContain("<Progress value={g.pct} label={`${g.name} goal progress`} />");
+    expect(src).toContain("<Progress value={Math.min(1, g.pct)} label={`${g.name} goal progress`} />");
   });
 
   it("agent progress widgets pass a per-widget label", () => {
@@ -50,3 +50,5 @@ describe("Progress a11y (WAI-ARIA progressbar)", () => {
     }
   });
 });
+
+[executed on device: aubrieta (7aba6798-e9cc-49d5-b00e-694dfe832d6e)]
