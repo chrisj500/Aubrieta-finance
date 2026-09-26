@@ -198,8 +198,8 @@ export function createReportsService(db: Db = getDb()) {
     },
 
     /** Monthly total expenses for the last `months` months (for spending trend chart). */
-    async spendingTrend(userId: string, months: number, allowlist?: AllowlistCtx | null, includePending = true): Promise<Array<{ month: string; spentCents: number }>> {
-      const flow = await this.cashflow(userId, months, allowlist, undefined, undefined, false, includePending);
+    async spendingTrend(userId: string, months: number, allowlist?: AllowlistCtx | null, includeExcluded = false, includePending = true): Promise<Array<{ month: string; spentCents: number }>> {
+      const flow = await this.cashflow(userId, months, allowlist, undefined, undefined, includeExcluded, includePending);
       return flow.map((f) => ({ month: f.month, spentCents: f.expenseCents }));
     },
   };
