@@ -997,7 +997,8 @@ export default function PlanPage() {
           <div className="mt-3 space-y-2">
             {(bills.data?.bills ?? []).map((b) => (
               <div key={b.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
-                <div>                  <p className="font-medium text-text">
+                <div>
+                  <p className="font-medium text-text">
                     {b.name}
                     {!b.active && <span className="ml-2 text-xs text-text-muted">(paid)</span>}
                   </p>
