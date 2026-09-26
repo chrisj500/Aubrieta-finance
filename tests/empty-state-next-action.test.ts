@@ -13,8 +13,8 @@ describe("core empty states explain WHY + CTA + hint (Q11)", () => {
     const src = read("src/app/(app)/budgets/page.tsx");
     expect(src).toContain("No budgets yet");
     expect(src).toContain("track spending and catch overages"); // WHY
-    expect(src).toContain("Create your first one"); // CTA
-    expect(src).toContain("below"); // hint
+    expect(src).toContain("Create your first budget"); // CTA
+    expect(src).toContain("group several together"); // hint
   });
 
   it("accounts empty state", () => {

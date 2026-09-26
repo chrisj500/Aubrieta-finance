@@ -5,9 +5,11 @@ import { usePageTitle } from "@/lib/use-page-title";
 import { useEscapeToClose } from "@/lib/use-escape-to-close";
 import { useDialogA11y } from "@/lib/use-dialog-a11y";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, AlertTriangle, CalendarRange, ChevronDown, Pencil, Trash2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CalendarRange, ChevronDown, CircleDollarSign, Gauge, Pencil, PiggyBank, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardTitle } from "@/components/ui/card";
+import { MetricCard } from "@/components/ui/metric-card";
+import { Page, PageHeader } from "@/components/ui/page";
 import { Progress } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -315,9 +317,29 @@ export default function BudgetsPage() {
       ? "Enter an amount greater than 0"
       : null;
 
+  const budgetSummary = (data?.budgets ?? []).reduce(
+    (acc, budget) => {
+      acc.budgetedCents += budget.frameAmountCents;
+      acc.spentCents += budget.spentCents;
+      acc.remainingCents += budget.remainingCents;
+      if (budget.pct > 1) acc.overCount += 1;
+      else if (budget.pct >= 0.85) acc.nearCount += 1;
+      return acc;
+    },
+    { budgetedCents: 0, spentCents: 0, remainingCents: 0, overCount: 0, nearCount: 0 },
+  );
+  const orderedBudgets = [...(data?.budgets ?? [])].sort((a, b) => {
+    const attentionRank = (budget: Budget) => (budget.pct > 1 ? 2 : budget.pct >= 0.85 ? 1 : 0);
+    return attentionRank(b) - attentionRank(a) || b.pct - a.pct || a.name.localeCompare(b.name);
+  });
+  const attentionCount = budgetSummary.overCount + budgetSummary.nearCount;
+
   return (
-    <div className="space-y-6">
-      <h1 className="sr-only">Budgets</h1>
+    <Page>
+      <PageHeader
+        title="Budgets"
+        description="Set spending limits, see what needs attention, and understand what remains in the selected time frame."
+      />
       {/* Widgets your AI added (dev:ui) */}
       <AgentWidgets tab="budgets" />
 
@@ -334,6 +356,37 @@ export default function BudgetsPage() {
             </Button>
           </div>
         </Card>
+      )}
+
+      {!hasFailed && !isLoading && data && (
+        <section aria-labelledby="budget-overview-heading" className="space-y-3">
+          <div>
+            <h2 id="budget-overview-heading" className="text-sm font-semibold text-text">Budget overview</h2>
+            <p className="mt-0.5 text-xs text-text-muted">{FRAME_LABELS[frame]} · totals use each budget&apos;s amount for this view.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <MetricCard
+              label="Budgeted in view"
+              value={<Money cents={budgetSummary.budgetedCents} />}
+              hint={`${data.budgets.length} active ${data.budgets.length === 1 ? "budget" : "budgets"}`}
+              icon={<PiggyBank size={17} />}
+            />
+            <MetricCard
+              label="Spent in view"
+              value={<Money cents={budgetSummary.spentCents} />}
+              hint={attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} attention` : "No budgets near their limit"}
+              icon={<CircleDollarSign size={17} />}
+              tone={budgetSummary.overCount > 0 ? "danger" : "default"}
+            />
+            <MetricCard
+              label="Remaining in view"
+              value={<Money cents={budgetSummary.remainingCents} signed />}
+              hint={budgetSummary.overCount > 0 ? `${budgetSummary.overCount} over limit` : "Across active budgets"}
+              icon={<Gauge size={17} />}
+              tone={budgetSummary.remainingCents < 0 ? "danger" : "positive"}
+            />
+          </div>
+        </section>
       )}
 
       {/* Time-frame selector */}
@@ -417,15 +470,15 @@ export default function BudgetsPage() {
         )}
       </Card>
 
-      {/* Monthly pool — this month's income, dwindling as you spend */}
+      {/* Cash flow context for the selected view. */}
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <CardTitle>
-              {frame === "period" ? "This month's pool" : `${FRAME_LABELS[frame]} pool`}
+              Cash flow in view
             </CardTitle>
             <p className="mt-1 text-xs text-text-muted">
-              Income in the period, minus what you&apos;ve spent — it dwindles as expenses come in. This is your safe-to-spend pool.
+              Income minus spending in this view. This is cash-flow context, not an estimate of money available after future bills.
             </p>
           </div>
           {summary.data && (
@@ -443,7 +496,7 @@ export default function BudgetsPage() {
                 </p>
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-text-muted">Safe to spend</p>
+                <p className="text-xs text-text-muted">Net cash flow</p>
                 <p className={`money truncate text-xl font-bold sm:text-2xl ${summary.data.summary.monthNetCents >= 0 ? "text-text" : "text-danger"}`}>
                   <Money cents={summary.data.summary.monthNetCents} signed />
                 </p>
@@ -484,7 +537,7 @@ export default function BudgetsPage() {
                 const perDayCents = Math.floor(summary.data!.summary.monthNetCents / daysLeft);
                 return (
                   <p className="mt-2 text-xs text-text-muted">
-                    About <span className="font-medium text-text"><Money cents={perDayCents} /></span> per day left this month.
+                    Current net cash flow averages <span className="font-medium text-text"><Money cents={perDayCents} /></span> per remaining day this month.
                   </p>
                 );
               })()
@@ -496,8 +549,13 @@ export default function BudgetsPage() {
       {isLoading || !data ? (
         <BudgetsSkeleton />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {data.budgets.map((b) => {
+        <section aria-labelledby="budget-list-heading" className="space-y-3">
+          <div>
+            <h2 id="budget-list-heading" className="text-sm font-semibold text-text">Budget limits</h2>
+            <p className="mt-0.5 text-xs text-text-muted">Budgets over or near their limit appear first.</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {orderedBudgets.map((b) => {
             const over = b.pct > 1;
             const near = !over && b.pct >= 0.85;
             const periodLabel = b.period === "weekly" ? "/week" : b.period === "yearly" ? "/year" : "/mo";
@@ -592,11 +650,14 @@ export default function BudgetsPage() {
           {data.budgets.length === 0 && (
             <Card className="sm:col-span-2 lg:col-span-3">
               <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center">
-                <p className="text-sm text-text-muted">No budgets yet — set a limit to track spending and catch overages before month-end. Create your first one below.</p>
+                <p className="text-sm text-text-muted">No budgets yet — set a limit to track spending and catch overages before month-end.</p>
+                <p className="mt-1 text-xs text-text-muted">Start with one category or group several together; you can change the amount and period later.</p>
+                <Button className="mt-3" onClick={() => setShowAdd(true)}>Create your first budget</Button>
               </div>
             </Card>
           )}
-        </div>
+          </div>
+        </section>
       )}
 
       {/* Create/edit-budget modal */}
@@ -727,6 +788,6 @@ export default function BudgetsPage() {
         onUndo={() => undoBudget && undoDelete.mutate(undoBudget)}
         onClose={() => setUndoBudget(null)}
       />
-    </div>
+    </Page>
   );
 }
