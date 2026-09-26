@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Compass } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Page not found — Open Finance",
+  title: "Page not found — Aubrieta",
 };
 
 /**
