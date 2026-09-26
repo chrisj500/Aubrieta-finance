@@ -64,6 +64,11 @@ export default function TransactionsPage() {
   const [q, setQ] = useState("");
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
+
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("accountId");
+    if (fromUrl) setAccountId(fromUrl);
+  }, []);
   const [pendingOnly, setPendingOnly] = useState(false);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");

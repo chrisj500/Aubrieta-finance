@@ -292,14 +292,25 @@ export default function AccountsPage() {
                           <Button type="submit" size="sm" disabled={rename.isPending}>Save</Button>
                         </form>
                       ) : (
-                        <button
-                          type="button"
-                          disabled={!a.is_owner}
-                          className="block max-w-full truncate text-left text-base font-semibold text-text enabled:hover:text-accent-text disabled:cursor-default"
-                          onClick={() => { setEditingName(a.id); setNameDraft(a.name); }}
-                        >
-                          {a.name}
-                        </button>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <Link
+                            href={`/accounts/${a.id}`}
+                            className="block min-w-0 truncate text-left text-base font-semibold text-text hover:text-accent-text"
+                          >
+                            {a.name}
+                          </Link>
+                          {a.is_owner ? (
+                            <button
+                              type="button"
+                              aria-label={`Rename ${a.name}`}
+                              title="Rename account"
+                              onClick={() => { setEditingName(a.id); setNameDraft(a.name); }}
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          ) : null}
+                        </div>
                       )}
                       <p className="mt-0.5 truncate text-xs text-text-muted">{detail}</p>
                       <div className="mt-1 flex flex-wrap gap-1">
