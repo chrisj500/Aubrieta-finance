@@ -63,10 +63,12 @@ describe("plan add-sheet amount validation UX", () => {
       "disabled={createDebt.isPending || !debtName || !debtPrincipal || !!debtPrincipalError}"
     );
     expect(src).toContain(
-      "disabled={createGoal.isPending || !goalName || !goalTarget || !!goalTargetError}"
+      "disabled={createGoal.isPending || updateGoal.isPending || !goalName || !goalTarget || !!goalTargetError}"
     );
     expect(src).toContain(
       "disabled={createExpense.isPending || !expName || !expAmount || !!expAmountError || (expSetAside && expMode === \"days_of_month\" && expDays.length === 0)}"
     );
   });
 });
+
+[executed on device: aubrieta (7aba6798-e9cc-49d5-b00e-694dfe832d6e)]
