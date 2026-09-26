@@ -28,6 +28,7 @@ export function CustomSelect({
   placeholder = "Select…",
   className,
   ariaLabel,
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -35,6 +36,7 @@ export function CustomSelect({
   placeholder?: string;
   className?: string;
   ariaLabel?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -111,7 +113,8 @@ export function CustomSelect({
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((o) => !o)}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
@@ -121,7 +124,7 @@ export function CustomSelect({
             );
           }
         }}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 text-sm text-text focus:outline-2 focus:outline-accent"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 text-sm text-text focus:outline-2 focus:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className={selected ? "" : "text-text-muted"}>
           {selected ? selected.label : placeholder}
