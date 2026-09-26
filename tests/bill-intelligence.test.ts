@@ -172,6 +172,221 @@ describe("M2 recurring bill intelligence", () => {
     expect(await db.get("SELECT id FROM bills")).toBeUndefined();
   });
 
+
+  it("associates a matching manual bill instead of creating a duplicate detected obligation", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "m2-manual-dedupe");
+    const accountId = await seedManualAccount(db, user.id, "Checking");
+    const planning = createPlanningService(db);
+
+    const manual = await planning.createBill(user.id, {
+      name: "Rent",
+      amountCents: 145000,
+      frequency: "monthly",
+      dueDay: 1,
+      nextDueDate: addMonthsISO(todayISO(), 1).slice(0, 8) + "01",
+      accountId,
+    });
+
+    for (const date of monthlyHistoryDates()) {
+      await seedExpense(db, accountId, {
+        date: date.slice(0, 8) + "01",
+        amountCents: -145000,
+        name: "Maple Ridge Apartments",
+        merchant: "Maple Ridge Apartments",
+      });
+    }
+
+    const svc = createBillIntelligenceService(db);
+    const first = await svc.detectRecurring(user.id);
+    const second = await svc.detectRecurring(user.id);
+    expect(first.detected).toBe(1);
+    expect(second.detected).toBe(1);
+
+    const bills = await db.all<{ id: string; source: string; recurring_series_id: string | null; active: number }>(
+      "SELECT id, source, recurring_series_id, active FROM bills WHERE user_id = ? ORDER BY created_at",
+      user.id,
+    );
+    expect(bills).toHaveLength(1);
+    expect(bills[0]).toMatchObject({
+      id: manual.id,
+      source: "manual",
+      active: 1,
+    });
+    expect(bills[0].recurring_series_id).toBeTruthy();
+
+    const before = await createPlanningService(db).digest(user.id, 30);
+    await svc.detectRecurring(user.id);
+    const after = await createPlanningService(db).digest(user.id, 30);
+    expect(after.totalUpcomingCents).toBe(before.totalUpcomingCents);
+  });
+
+
+  it("dedupes manual utility and subscription aliases on the same schedule", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "m2-alias-dedupe");
+    const accountId = await seedManualAccount(db, user.id, "Checking");
+    const ts = new Date().toISOString();
+
+    const categories = {
+      Utilities: randomUUID(),
+      Entertainment: randomUUID(),
+    };
+    for (const [name, id] of Object.entries(categories)) {
+      await db.run(
+        "INSERT INTO categories (id, user_id, name, is_system, created_at) VALUES (?, ?, ?, 1, ?)",
+        id,
+        user.id,
+        name,
+        ts,
+      );
+    }
+
+    const planning = createPlanningService(db);
+    await planning.createBill(user.id, {
+      name: "Electric",
+      amountCents: 9400,
+      frequency: "monthly",
+      dueDay: 7,
+      nextDueDate: addMonthsISO(todayISO(), 1).slice(0, 8) + "07",
+      accountId,
+      categoryId: categories.Utilities,
+    });
+    await planning.createBill(user.id, {
+      name: "Cell Phone",
+      amountCents: 5200,
+      frequency: "monthly",
+      dueDay: 9,
+      nextDueDate: addMonthsISO(todayISO(), 1).slice(0, 8) + "09",
+      accountId,
+      categoryId: categories.Utilities,
+    });
+    await planning.createBill(user.id, {
+      name: "Netflix",
+      amountCents: 1549,
+      frequency: "monthly",
+      dueDay: 14,
+      nextDueDate: addMonthsISO(todayISO(), 1).slice(0, 8) + "14",
+      accountId,
+      categoryId: categories.Entertainment,
+    });
+
+    const histories = [
+      { name: "City Power & Light", amount: -9400, day: "07", categoryId: categories.Utilities },
+      { name: "Verizon Wireless", amount: -5200, day: "09", categoryId: categories.Utilities },
+      { name: "Netflix", amount: -1549, day: "14", categoryId: categories.Entertainment },
+    ];
+    for (const history of histories) {
+      for (const date of monthlyHistoryDates()) {
+        await db.run(
+          `INSERT INTO transactions (
+             id, account_id, amount_cents, date, name, merchant_name,
+             pending, is_transfer, source, user_category_id, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'test', ?, ?)`,
+          randomUUID(),
+          accountId,
+          history.amount,
+          date.slice(0, 8) + history.day,
+          history.name,
+          history.name,
+          history.categoryId,
+          ts,
+        );
+      }
+    }
+
+    const svc = createBillIntelligenceService(db);
+    await svc.detectRecurring(user.id);
+    await svc.detectRecurring(user.id);
+
+    const bills = await db.all<{ name: string; source: string; active: number }>(
+      "SELECT name, source, active FROM bills WHERE user_id = ? ORDER BY name",
+      user.id,
+    );
+    expect(bills).toEqual([
+      { name: "Cell Phone", source: "manual", active: 1 },
+      { name: "Electric", source: "manual", active: 1 },
+      { name: "Netflix", source: "manual", active: 1 },
+    ]);
+
+    const activeSeries = await db.all<{ display_name: string }>(
+      "SELECT display_name FROM recurring_series WHERE user_id = ? AND active = 1 ORDER BY display_name",
+      user.id,
+    );
+    expect(activeSeries).toHaveLength(3);
+  });
+
+  it("suppresses common discretionary monthly spending from becoming bills", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "m2-discretionary");
+    const accountId = await seedManualAccount(db, user.id, "Checking");
+    const ts = new Date().toISOString();
+    const categoryId = randomUUID();
+    await db.run(
+      "INSERT INTO categories (id, user_id, name, is_system, created_at) VALUES (?, ?, 'Groceries', 1, ?)",
+      categoryId,
+      user.id,
+      ts,
+    );
+
+    for (const date of monthlyHistoryDates()) {
+      await db.run(
+        `INSERT INTO transactions (
+           id, account_id, amount_cents, date, name, merchant_name,
+           pending, is_transfer, source, user_category_id, created_at
+         ) VALUES (?, ?, -6800, ?, 'Whole Foods Market', 'Whole Foods Market',
+                   0, 0, 'test', ?, ?)`,
+        randomUUID(),
+        accountId,
+        date.slice(0, 8) + "11",
+        categoryId,
+        ts,
+      );
+    }
+
+    const result = await createBillIntelligenceService(db).detectRecurring(user.id);
+    expect(result.detected).toBe(1);
+    expect(result.billsUpserted).toBe(0);
+    expect(await db.get("SELECT id FROM bills WHERE user_id = ?", user.id)).toBeUndefined();
+  });
+
+  it("still detects an unrelated non-discretionary recurring bill", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "m2-utility-detect");
+    const accountId = await seedManualAccount(db, user.id, "Checking");
+    const ts = new Date().toISOString();
+    const categoryId = randomUUID();
+    await db.run(
+      "INSERT INTO categories (id, user_id, name, is_system, created_at) VALUES (?, ?, 'Utilities', 1, ?)",
+      categoryId,
+      user.id,
+      ts,
+    );
+
+    for (const date of monthlyHistoryDates()) {
+      await db.run(
+        `INSERT INTO transactions (
+           id, account_id, amount_cents, date, name, merchant_name,
+           pending, is_transfer, source, user_category_id, created_at
+         ) VALUES (?, ?, -9400, ?, 'City Power & Light', 'City Power & Light',
+                   0, 0, 'test', ?, ?)`,
+        randomUUID(),
+        accountId,
+        date.slice(0, 8) + "07",
+        categoryId,
+        ts,
+      );
+    }
+
+    const result = await createBillIntelligenceService(db).detectRecurring(user.id);
+    expect(result.billsUpserted).toBe(1);
+    const bill = await db.get<{ name: string; source: string }>(
+      "SELECT name, source FROM bills WHERE user_id = ?",
+      user.id,
+    );
+    expect(bill).toEqual({ name: "City Power & Light", source: "detected" });
+  });
+
   it("lets a provider recurring stream outrank an equivalent local prediction", async () => {
     const db = createTestDb();
     const user = await seedUser(db, "m2-provider-recurring");

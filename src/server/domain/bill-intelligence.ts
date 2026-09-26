@@ -39,6 +39,7 @@ interface DetectionTxn {
   name: string;
   merchant_name: string | null;
   user_category_id: string | null;
+  category_name: string | null;
 }
 
 interface SeriesCandidate {
@@ -47,6 +48,7 @@ interface SeriesCandidate {
   displayName: string;
   accountId: string;
   categoryId: string | null;
+  categoryName: string | null;
   frequency: BillFrequency;
   intervalDays: number;
   typicalAmountCents: number;
@@ -71,6 +73,54 @@ export function normalizeRecurringMerchant(raw: string): string {
     .trim()
     .replace(/\s+/g, " ")
     .slice(0, 120);
+}
+
+const DISCRETIONARY_CATEGORY_HINTS = [
+  "grocery",
+  "groceries",
+  "food",
+  "dining",
+  "restaurant",
+  "shopping",
+  "transportation",
+  "travel",
+  "gas",
+  "fuel",
+];
+
+function isLikelyDiscretionaryCategory(name: string | null): boolean {
+  if (!name) return false;
+  const normalized = normalizeRecurringMerchant(name);
+  return DISCRETIONARY_CATEGORY_HINTS.some((hint) =>
+    normalized.split(" ").some((token) => token === hint || token.startsWith(hint)),
+  );
+}
+
+function meaningfulNameTokens(raw: string): Set<string> {
+  const ignored = new Set(["bill", "payment", "monthly", "service", "services", "subscription"]);
+  return new Set(
+    normalizeRecurringMerchant(raw)
+      .split(" ")
+      .filter((token) => token.length >= 4 && !ignored.has(token)),
+  );
+}
+
+function namesRelated(a: string, b: string): boolean {
+  const na = normalizeRecurringMerchant(a);
+  const nb = normalizeRecurringMerchant(b);
+  if (!na || !nb) return false;
+  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
+  const left = meaningfulNameTokens(a);
+  const right = meaningfulNameTokens(b);
+  for (const token of left) {
+    if (right.has(token)) return true;
+  }
+  return false;
+}
+
+function dueDayDistance(a: number, b: number): number {
+  const delta = Math.abs(a - b);
+  return Math.min(delta, 31 - delta);
 }
 
 function median(values: number[]): number {
@@ -161,6 +211,7 @@ function buildCandidate(rows: DetectionTxn[]): SeriesCandidate | null {
     displayName: (last.merchant_name ?? last.name).trim().slice(0, 100),
     accountId: last.account_id,
     categoryId: last.user_category_id,
+    categoryName: last.category_name,
     frequency: cadence.frequency,
     intervalDays,
     typicalAmountCents,
@@ -213,6 +264,116 @@ async function upsertOccurrence(
 }
 
 export function createBillIntelligenceService(db: Db) {
+  type ExistingBillMatch = {
+    id: string;
+    name: string;
+    amount_cents: number;
+    frequency: BillFrequency;
+    due_day: number | null;
+    next_due_date: string | null;
+    category_id: string | null;
+    account_id: string | null;
+    source: string;
+    recurring_series_id: string | null;
+    provider_liability_id: string | null;
+    user_overridden: number;
+  };
+
+  async function findEquivalentExistingBill(
+    userId: string,
+    seriesId: string,
+    candidate: SeriesCandidate,
+  ): Promise<ExistingBillMatch | null> {
+    const bills = await db.all<ExistingBillMatch>(
+      `SELECT id, name, amount_cents, frequency, due_day, next_due_date,
+              category_id, account_id, source, recurring_series_id,
+              provider_liability_id, user_overridden
+         FROM bills
+        WHERE user_id = ? AND active = 1
+          AND provider_liability_id IS NULL
+          AND (source = 'manual' OR user_overridden = 1)
+          AND (recurring_series_id IS NULL OR recurring_series_id = ?)`,
+      userId,
+      seriesId,
+    );
+
+    const candidateDueDay = Number(candidate.nextExpectedDate.slice(8, 10));
+    for (const bill of bills) {
+      if (bill.frequency !== candidate.frequency) continue;
+      if (bill.account_id && bill.account_id !== candidate.accountId) continue;
+
+      const amountDelta = Math.abs(bill.amount_cents - candidate.typicalAmountCents);
+      const amountTolerance = Math.max(500, Math.round(bill.amount_cents * 0.25));
+      if (amountDelta > amountTolerance) continue;
+
+      const billDueDay =
+        bill.due_day ??
+        (bill.next_due_date ? Number(bill.next_due_date.slice(8, 10)) : null);
+      if (billDueDay === null || dueDayDistance(billDueDay, candidateDueDay) > 3) continue;
+
+      const sameAccount = bill.account_id === candidate.accountId;
+      const sameCategory =
+        bill.category_id !== null &&
+        candidate.categoryId !== null &&
+        bill.category_id === candidate.categoryId;
+      const tightAmount =
+        amountDelta <= Math.max(200, Math.round(bill.amount_cents * 0.05));
+      const nearExactDue = dueDayDistance(billDueDay, candidateDueDay) <= 1;
+      const relatedName = namesRelated(bill.name, candidate.displayName);
+
+      // Require either recognizable naming, matching account+category, or a
+      // very strong schedule/amount fingerprint on the same account. This
+      // deliberately avoids broad fuzzy-name merging.
+      if (
+        relatedName ||
+        (sameAccount && sameCategory) ||
+        (sameAccount && tightAmount && nearExactDue)
+      ) {
+        return bill;
+      }
+    }
+    return null;
+  }
+
+  async function suppressDerivedBill(
+    billId: string,
+    userId: string,
+    detachSeries: boolean,
+  ): Promise<void> {
+    const ts = now();
+    await db.run(
+      `UPDATE bill_occurrences
+          SET status = 'skipped', updated_at = ?
+        WHERE user_id = ? AND bill_id = ? AND status IN ('upcoming','overdue')`,
+      ts,
+      userId,
+      billId,
+    );
+    await db.run(
+      `UPDATE notification_events
+          SET status = 'cancelled', updated_at = ?
+        WHERE user_id = ? AND status = 'pending'
+          AND bill_occurrence_id IN (
+            SELECT id FROM bill_occurrences WHERE user_id = ? AND bill_id = ?
+          )`,
+      ts,
+      userId,
+      userId,
+      billId,
+    );
+    await db.run(
+      `UPDATE bills
+          SET active = 0,
+              recurring_series_id = CASE WHEN ? THEN NULL ELSE recurring_series_id END,
+              updated_at = ?
+        WHERE id = ? AND user_id = ?`,
+      detachSeries ? 1 : 0,
+      ts,
+      billId,
+      userId,
+    );
+  }
+
   async function upsertDetectedCandidate(userId: string, c: SeriesCandidate): Promise<string | null> {
     const ts = now();
 
@@ -301,12 +462,43 @@ export function createBillIntelligenceService(db: Db) {
 
     let bill = await db.get<{
       id: string;
+      source: string;
       user_overridden: number;
       provider_liability_id: string | null;
     }>(
-      "SELECT id, user_overridden, provider_liability_id FROM bills WHERE recurring_series_id = ?",
+      "SELECT id, source, user_overridden, provider_liability_id FROM bills WHERE recurring_series_id = ?",
       seriesId,
     );
+
+    const equivalent = await findEquivalentExistingBill(userId, seriesId, c);
+    if (equivalent && equivalent.id !== bill?.id) {
+      // A manual/user-owned bill is the obligation of record. Attach the
+      // detected series to it so transaction history can enrich the bill
+      // without creating a second cash obligation.
+      if (bill && !bill.user_overridden && !bill.provider_liability_id) {
+        await suppressDerivedBill(bill.id, userId, true);
+      }
+      await db.run(
+        `UPDATE bills SET recurring_series_id = ?, updated_at = ?
+          WHERE id = ? AND user_id = ?`,
+        seriesId,
+        ts,
+        equivalent.id,
+        userId,
+      );
+      return equivalent.id;
+    }
+
+    // Transaction cadence alone is not enough to turn common discretionary
+    // shopping/dining/travel activity into a bill. A matching manual bill can
+    // still opt such a series into the Bills model through the branch above.
+    if (isLikelyDiscretionaryCategory(c.categoryName)) {
+      if (bill?.user_overridden) return bill.id;
+      if (bill && !bill.provider_liability_id) {
+        await suppressDerivedBill(bill.id, userId, false);
+      }
+      return null;
+    }
 
     if (!bill) {
       const id = randomUUID();
@@ -332,8 +524,12 @@ export function createBillIntelligenceService(db: Db) {
         ts,
         seriesId,
       );
-      bill = { id, user_overridden: 0, provider_liability_id: null };
-    } else if (!bill.user_overridden && !bill.provider_liability_id) {
+      bill = { id, source: "detected", user_overridden: 0, provider_liability_id: null };
+    } else if (bill.source === "manual" || bill.user_overridden) {
+      // The recurring series may enrich a user-owned bill, but detection must
+      // never take ownership of its name/schedule/source on later passes.
+      return bill.id;
+    } else if (!bill.provider_liability_id) {
       await db.run(
         `UPDATE bills SET
            name = ?, amount_cents = ?, frequency = ?, due_day = ?,
@@ -517,9 +713,10 @@ export function createBillIntelligenceService(db: Db) {
     const from = addDaysISO(todayISO(), -DETECTION_LOOKBACK_DAYS);
     const rows = await db.all<DetectionTxn>(
       `SELECT t.id, t.account_id, t.amount_cents, t.date, t.name, t.merchant_name,
-              t.user_category_id
+              t.user_category_id, c.name AS category_name
          FROM transactions t
          JOIN accounts a ON a.id = t.account_id
+         LEFT JOIN categories c ON c.id = t.user_category_id
         WHERE a.user_id = ? AND a.deleted_at IS NULL
           AND t.date >= ? AND t.amount_cents < 0
           AND t.pending = 0 AND t.is_transfer = 0
