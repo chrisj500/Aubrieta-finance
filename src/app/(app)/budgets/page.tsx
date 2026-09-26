@@ -5,9 +5,11 @@ import { usePageTitle } from "@/lib/use-page-title";
 import { useEscapeToClose } from "@/lib/use-escape-to-close";
 import { useDialogA11y } from "@/lib/use-dialog-a11y";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, AlertTriangle, CalendarRange, ChevronDown, Pencil, Trash2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CalendarRange, ChevronDown, CircleDollarSign, Gauge, Pencil, PiggyBank, Trash2, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardTitle } from "@/components/ui/card";
+import { MetricCard } from "@/components/ui/metric-card";
+import { Page, PageHeader } from "@/components/ui/page";
 import { Progress } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -315,9 +317,29 @@ export default function BudgetsPage() {
       ? "Enter an amount greater than 0"
       : null;
 
+  const budgetSummary = (data?.budgets ?? []).reduce(
+    (acc, budget) => {
+      acc.budgetedCents += budget.frameAmountCents;
+      acc.spentCents += budget.spentCents;
+      acc.remainingCents += budget.remainingCents;
+      if (budget.pct > 1) acc.overCount += 1;
+      else if (budget.pct >= 0.85) acc.nearCount += 1;
+      return acc;
+    },
+    { budgetedCents: 0, spentCents: 0, remainingCents: 0, overCount: 0, nearCount: 0 },
+  );
+  const orderedBudgets = [...(data?.budgets ?? [])].sort((a, b) => {
+    const attentionRank = (budget: Budget) => (budget.pct > 1 ? 2 : budget.pct >= 0.85 ? 1 : 0);
+    return attentionRank(b) - attentionRank(a) || b.pct - a.pct || a.name.localeCompare(b.name);
+  });
+  const attentionCount = budgetSummary.overCount + budgetSummary.nearCount;
+
   return (
-    <div className="space-y-6">
-      <h1 className="sr-only">Budgets</h1>
+    <Page>
+      <PageHeader
+        title="Budgets"
+        description="Set spending limits, see what needs attention, and understand what remains in the selected time frame."
+      />
       {/* Widgets your AI added (dev:ui) */}
       <AgentWidgets tab="budgets" />
 
