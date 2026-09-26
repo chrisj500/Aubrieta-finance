@@ -329,7 +329,7 @@ export default function SettingsPage() {
       <Card className="lg:col-span-2">
         <CardTitle>Bank connections</CardTitle>
         <p className="mt-1 text-sm text-text-muted">
-          Open Finance connects to your bank through Plaid. Paste your free connection keys — they&apos;re encrypted on
+          Aubrieta connects to your bank through Plaid. Paste your free connection keys — they&apos;re encrypted on
           this device and only ever leave it to talk to your bank. No keys? No problem — track everything manually and
           add banks later.
         </p>
@@ -679,7 +679,7 @@ export default function SettingsPage() {
       </SettingsGroup>
 
       <p className="pb-2 text-center text-xs text-text-muted lg:col-span-2">
-        Open Finance v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.1.0"} · MIT · self-hosted
+        Aubrieta v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.1.0"} · MIT · self-hosted
       </p>
 
       {msg && (
@@ -1205,7 +1205,7 @@ function AgentWiringCard({ setMsg, setErr }: { setMsg: (s: string | null) => voi
       // The guide endpoint needs an agent token; for the user's own agent we
       // fetch a compact, human-readable version built from the same content.
       const text =
-        "You are connected to Open Finance — a self-hosted personal finance app.\n" +
+        "You are connected to Aubrieta — a self-hosted personal finance app.\n" +
         "Fetch your full handbook at GET /api/agent/guide (Bearer token). Key rules:\n" +
         "- Money is integer cents. Positive = income, negative = expense.\n" +
         "- Call get_capabilities first; plan around what it says you have.\n" +
@@ -1455,7 +1455,7 @@ function AgentWiringCard({ setMsg, setErr }: { setMsg: (s: string | null) => voi
           <p className="text-sm font-medium text-text">AI guardrails</p>
           <p className="mt-0.5 text-xs text-text-muted">
             Safety rails your agent runs under. Two can&apos;t be turned off: your agent can never delete accounts,
-            and it can never move money (Open Finance has no payment rails — structural).
+            and it can never move money (Aubrieta has no payment rails — structural).
           </p>
           <div className="mt-3 space-y-3">
             <div className="flex items-start justify-between gap-4">
@@ -1550,7 +1550,7 @@ function AgentWiringCard({ setMsg, setErr }: { setMsg: (s: string | null) => voi
               {guideCopied ? "Copied" : "Give your AI its bearings"}
             </Button>
             <p className="mt-1.5 text-xs text-text-muted">
-              Copies a short brief to paste into your agent — what Open Finance is, the money rules, and where its
+              Copies a short brief to paste into your agent — what Aubrieta is, the money rules, and where its
               full handbook lives (<code className="text-accent-text">/api/agent/guide</code>).
             </p>
           </div>
@@ -1871,7 +1871,7 @@ function HubPanel({ setMsg, setErr }: { setMsg: (s: string | null) => void; setE
         <CardTitle>Connect your phone to a computer hub</CardTitle>
         <p className="mt-1 text-sm text-text-muted">
           Right now this phone runs <strong className="text-text">fully standalone</strong> — everything lives on the
-          device. To pair with a hub (your computer running Open Finance), scan the QR code it shows under Settings →
+          device. To pair with a hub (your computer running Aubrieta), scan the QR code it shows under Settings →
           Connect your phone &amp; computer:
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1945,7 +1945,7 @@ function HubPanel({ setMsg, setErr }: { setMsg: (s: string | null) => void; setE
     <Card className="lg:col-span-2">
       <CardTitle>Connect your phone &amp; computer</CardTitle>
       <p className="mt-1 text-sm text-text-muted">
-        Use Open Finance just on this computer, or let it be the base your phone talks to. Pick one — no technical setup needed.
+        Use Aubrieta just on this computer, or let it be the base your phone talks to. Pick one — no technical setup needed.
       </p>
       <SubcardQueryError q={diagnostics} what="hub diagnostics" />
       <SubcardQueryError q={detect} what="hub detection" />
