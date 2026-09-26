@@ -2,10 +2,16 @@ import { randomUUID } from "@/lib/uuid";
 import { apiErrors } from "@/lib/api-error";
 import { assertValidCents } from "@/server/domain/money";
 import { getDb, type Db } from "@/server/db/registry";
+import { accountReadScope, assertAccountManageable, getHouseholdContext } from "@/server/authz/household-access";
 
 export interface AccountRow {
   id: string;
   user_id: string;
+  household_id: string | null;
+  owner_user_id: string | null;
+  visibility: "shared" | "private";
+  owner_display_name?: string | null;
+  is_owner?: boolean;
   item_id: string | null;
   plaid_account_id: string | null;
   name: string;
@@ -41,7 +47,8 @@ const ACCOUNT_TYPES = ["depository", "credit", "investment", "loan", "other"] as
 export function createAccountsService(db: Db = getDb()) {
   return {
     async list(userId: string): Promise<AccountRow[]> {
-      return db.all<AccountRow>(
+      const scope = await accountReadScope(db, userId, "a");
+      const rows = await db.all<AccountRow>(
         `SELECT a.*,
           COALESCE(
             i.institution_name,
@@ -53,25 +60,27 @@ export function createAccountsService(db: Db = getDb()) {
               LIMIT 1)
           ) AS institution_name,
           u.is_demo,
-                COALESCE((SELECT SUM(t.amount_cents) FROM transactions t WHERE t.account_id = a.id AND t.pending = 1 AND t.exclude_from_budgets = 0 AND t.is_transfer = 0), 0) AS pending_balance_cents
+          owner.display_name AS owner_display_name,
+          COALESCE((SELECT SUM(t.amount_cents) FROM transactions t WHERE t.account_id = a.id AND t.pending = 1 AND t.exclude_from_budgets = 0 AND t.is_transfer = 0), 0) AS pending_balance_cents
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
            JOIN users u ON u.id = a.user_id
-          WHERE a.user_id = ? AND a.hidden = 0 AND a.deleted_at IS NULL
+           LEFT JOIN users owner ON owner.id = COALESCE(a.owner_user_id, a.user_id)
+          WHERE ${scope.clause} AND a.hidden = 0 AND a.deleted_at IS NULL
           ORDER BY a.sort_order, a.type, a.name COLLATE NOCASE`,
-        userId
-      ).then((rows) =>
-        rows.map((a) => ({
-          ...a,
-          balance_with_pending_cents:
-            (a.current_balance_cents ?? 0) + (a.pending_balance_cents ?? 0),
-        }))
+        ...scope.params,
       );
+      return rows.map((a) => ({
+        ...a,
+        is_owner: (a.owner_user_id ?? a.user_id) === userId,
+        balance_with_pending_cents:
+          (a.current_balance_cents ?? 0) + (a.pending_balance_cents ?? 0),
+      }));
     },
 
     /** Removed accounts (soft-deleted) so the user can restore them. */
     async listDeleted(userId: string): Promise<AccountRow[]> {
-      return db.all<AccountRow>(
+      const rows = await db.all<AccountRow>(
         `SELECT a.*,
           COALESCE(
             i.institution_name,
@@ -82,14 +91,16 @@ export function createAccountsService(db: Db = getDb()) {
               ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
               LIMIT 1)
           ) AS institution_name,
-          u.is_demo
+          u.is_demo,
+          u.display_name AS owner_display_name
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
            JOIN users u ON u.id = a.user_id
-          WHERE a.user_id = ? AND a.deleted_at IS NOT NULL
+          WHERE COALESCE(a.owner_user_id, a.user_id) = ? AND a.deleted_at IS NOT NULL
           ORDER BY a.deleted_at DESC`,
-        userId
+        userId,
       );
+      return rows.map((a) => ({ ...a, is_owner: true }));
     },
 
     /**
@@ -97,8 +108,9 @@ export function createAccountsService(db: Db = getDb()) {
      * investment accounts unless read:banking is also held) AND account allowlist.
      */
     async listForAgent(userId: string, scopes: string[], accountIds: string[] | null): Promise<AccountRow[]> {
-      const conditions: string[] = ["a.user_id = ?", "a.hidden = 0"];
-      const params: unknown[] = [userId];
+      const scope = await accountReadScope(db, userId, "a");
+      const conditions: string[] = [scope.clause, "a.hidden = 0", "a.deleted_at IS NULL"];
+      const params: unknown[] = [...scope.params];
       const seeBanking = scopes.includes("read:banking");
       const seeInvestments = scopes.includes("read:investments");
       if (!seeBanking && seeInvestments) {
@@ -138,6 +150,7 @@ export function createAccountsService(db: Db = getDb()) {
     },
 
     async get(userId: string, id: string): Promise<AccountRow> {
+      const scope = await accountReadScope(db, userId, "a");
       const row = await db.get<AccountRow>(
         `SELECT a.*,
           COALESCE(
@@ -149,16 +162,18 @@ export function createAccountsService(db: Db = getDb()) {
               ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
               LIMIT 1)
           ) AS institution_name,
-          u.is_demo
+          u.is_demo,
+          owner.display_name AS owner_display_name
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
            JOIN users u ON u.id = a.user_id
-          WHERE a.id = ? AND a.user_id = ? AND a.hidden = 0`,
+           LEFT JOIN users owner ON owner.id = COALESCE(a.owner_user_id, a.user_id)
+          WHERE a.id = ? AND ${scope.clause} AND a.hidden = 0 AND a.deleted_at IS NULL`,
         id,
-        userId
+        ...scope.params,
       );
       if (!row) throw apiErrors.notFound("Account");
-      return row;
+      return { ...row, is_owner: (row.owner_user_id ?? row.user_id) === userId };
     },
 
     /** Manual account — no Plaid item, fully user-owned. */
@@ -172,6 +187,7 @@ export function createAccountsService(db: Db = getDb()) {
         currentBalanceCents?: number | null;
         availableBalanceCents?: number | null;
         currency?: string;
+        visibility?: "shared" | "private";
       }
     ): Promise<AccountRow> {
       const name = input.name.trim();
@@ -196,13 +212,18 @@ export function createAccountsService(db: Db = getDb()) {
         assertValidCents(input.availableBalanceCents, "Available balance");
       }
       const id = randomUUID();
+      const household = await getHouseholdContext(db, userId);
       await db.run(
         `INSERT INTO accounts
-           (id, user_id, item_id, plaid_account_id, name, official_name, type, subtype, mask,
+           (id, user_id, household_id, owner_user_id, visibility,
+            item_id, plaid_account_id, name, official_name, type, subtype, mask,
             current_balance_cents, available_balance_cents, currency, created_at)
-         VALUES (?, ?, NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         userId,
+        household?.householdId ?? null,
+        userId,
+        input.visibility ?? "shared",
         name,
         type,
         input.subtype?.trim().slice(0, 50) || null,
@@ -229,7 +250,7 @@ export function createAccountsService(db: Db = getDb()) {
     },
 
     async rename(userId: string, id: string, name: string): Promise<AccountRow> {
-      await this.get(userId, id);
+      await assertAccountManageable(db, userId, id);
       const clean = name.trim();
       if (!clean) throw apiErrors.badRequest("Account name cannot be empty.");
       if (clean.length > 100) throw apiErrors.badRequest("Account name cannot exceed 100 characters.");
@@ -241,10 +262,10 @@ export function createAccountsService(db: Db = getDb()) {
      * accounts this disconnects the account locally; the institution remains
      * linked so a later sync will continue importing the other accounts. */
     async remove(userId: string, id: string): Promise<void> {
+      await assertAccountManageable(db, userId, id);
       const row = await db.get<{ id: string; item_id: string | null }>(
-        "SELECT id, item_id FROM accounts WHERE id = ? AND user_id = ? AND hidden = 0 AND deleted_at IS NULL",
+        "SELECT id, item_id FROM accounts WHERE id = ? AND deleted_at IS NULL",
         id,
-        userId
       );
       if (!row) throw apiErrors.notFound("Account");
       await db.transaction(async () => {
@@ -264,10 +285,10 @@ export function createAccountsService(db: Db = getDb()) {
 
     /** Restore a soft-deleted account (and any Plaid account it belonged to). */
     async restore(userId: string, id: string): Promise<AccountRow> {
+      await assertAccountManageable(db, userId, id, true);
       const row = await db.get<{ id: string; deleted_at: string | null }>(
-        "SELECT id, deleted_at FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL",
+        "SELECT id, deleted_at FROM accounts WHERE id = ? AND deleted_at IS NOT NULL",
         id,
-        userId
       );
       if (!row) throw apiErrors.notFound("Account");
       await db.run("UPDATE accounts SET deleted_at = NULL, hidden = 0 WHERE id = ?", id);
@@ -277,7 +298,7 @@ export function createAccountsService(db: Db = getDb()) {
     /** Persist user-defined display order (array of account ids, first = top). */
     async reorder(userId: string, orderedIds: string[]): Promise<void> {
       const mine = await db.all<{ id: string }>(
-        "SELECT id FROM accounts WHERE user_id = ? AND deleted_at IS NULL",
+        "SELECT id FROM accounts WHERE COALESCE(owner_user_id, user_id) = ? AND deleted_at IS NULL",
         userId
       );
       const mineSet = new Set(mine.map((r) => r.id));
@@ -290,14 +311,14 @@ export function createAccountsService(db: Db = getDb()) {
       if (valid.length === 0) throw apiErrors.badRequest("No valid account ids to reorder.");
       await db.transaction(async () => {
         for (const [i, accountId] of valid.entries()) {
-          await db.run("UPDATE accounts SET sort_order = ? WHERE id = ? AND user_id = ?", i, accountId, userId);
+          await db.run("UPDATE accounts SET sort_order = ? WHERE id = ? AND COALESCE(owner_user_id, user_id) = ?", i, accountId, userId);
         }
       });
     },
 
     /** Free-text note describing the account (shown on the card). */
     async setDescription(userId: string, id: string, description: string | null): Promise<AccountRow> {
-      await this.get(userId, id);
+      await assertAccountManageable(db, userId, id);
       const clean = description?.trim().slice(0, 300) || null;
       await db.run("UPDATE accounts SET description = ? WHERE id = ?", clean, id);
       return this.get(userId, id);
@@ -305,7 +326,7 @@ export function createAccountsService(db: Db = getDb()) {
 
     /** User override for Plaid's inferred account type. */
     async setType(userId: string, id: string, type: string): Promise<AccountRow> {
-      await this.get(userId, id);
+      await assertAccountManageable(db, userId, id);
       // SAFETY: widens only the includes() parameter type so an arbitrary user string
       // can be membership-checked against the literal tuple; tuple contents unchanged.
       if (!(ACCOUNT_TYPES as readonly string[]).includes(type)) {
@@ -315,9 +336,25 @@ export function createAccountsService(db: Db = getDb()) {
       return this.get(userId, id);
     },
 
+    /** Shared accounts are visible to all household members; private accounts only to their owner. */
+    async setVisibility(userId: string, id: string, visibility: "shared" | "private"): Promise<AccountRow> {
+      await assertAccountManageable(db, userId, id);
+      await db.transaction(async () => {
+        await db.run("UPDATE accounts SET visibility = ? WHERE id = ?", visibility, id);
+        if (visibility === "private") {
+          // Tightening account privacy must also tighten any planning object
+          // linked to it; otherwise an amount/name could leak through Plan.
+          await db.run("UPDATE bills SET visibility = 'private' WHERE account_id = ?", id);
+          await db.run("UPDATE goals SET visibility = 'private' WHERE account_id = ?", id);
+          await db.run("UPDATE debts SET visibility = 'private' WHERE account_id = ?", id);
+        }
+      });
+      return this.get(userId, id);
+    },
+
     /** Include/exclude an account from the day-to-day net worth (P24). */
     async setNetWorthInclusion(userId: string, id: string, include: boolean): Promise<AccountRow> {
-      await this.get(userId, id);
+      await assertAccountManageable(db, userId, id);
       await db.run("UPDATE accounts SET include_in_net_worth = ? WHERE id = ?", include ? 1 : 0, id);
       return this.get(userId, id);
     },
