@@ -2,6 +2,7 @@ import { getDb, type Db } from "@/server/db/registry";
 import { addMonthsISO, monthlyEquivalent, monthsBetween, todayISO } from "@/server/domain/dates";
 import { createPlanningService } from "@/server/domain/planning";
 import { accountReadScope } from "@/server/authz/household-access";
+import { withAllowlist, type AllowlistCtx } from "@/server/db/allowlist";
 
 /**
  * 12-month projection per master plan §8.
@@ -44,20 +45,29 @@ export function createProjectionService(db: Db = getDb()) {
      * @param months how many months to project (default 12)
      * @param includeGoals include auto-contribution toward dated goals (default true, toggleable)
      */
-    async project(userId: string, months = 12, includeGoals = true, includePending = true): Promise<Projection> {
+    async project(
+      userId: string,
+      months = 12,
+      includeGoals = true,
+      includePending = true,
+      allowlist?: AllowlistCtx | null,
+    ): Promise<Projection> {
       const today = todayISO();
       const currentMonthStart = today.slice(0, 8) + "01";
       const planning = createPlanningService(db);
       const accountScope = await accountReadScope(db, userId, "accounts");
       const txnScope = await accountReadScope(db, userId, "a");
+      const allowAccounts = withAllowlist(allowlist ?? null, "id");
+      const allowTxns = withAllowlist(allowlist ?? null, "a.id");
 
       // Baseline: current total balance across all accounts (allowlist-aware from P7).
       const pendingClause = includePending
         ? " + COALESCE((SELECT SUM(t.amount_cents) FROM transactions t WHERE t.account_id = accounts.id AND t.pending = 1 AND t.exclude_from_budgets = 0 AND t.is_transfer = 0), 0)"
         : "";
       const total = await db.get<{ s: number }>(
-        `SELECT COALESCE(SUM(CASE WHEN type IN ('credit', 'loan') THEN -ABS(COALESCE(current_balance_cents, 0)) ELSE COALESCE(current_balance_cents, 0) END${pendingClause}), 0) AS s FROM accounts WHERE ${accountScope.clause} AND hidden = 0 AND deleted_at IS NULL AND include_in_net_worth = 1`,
+        `SELECT COALESCE(SUM(CASE WHEN type IN ('credit', 'loan') THEN -ABS(COALESCE(current_balance_cents, 0)) ELSE COALESCE(current_balance_cents, 0) END${pendingClause}), 0) AS s FROM accounts WHERE ${accountScope.clause} AND hidden = 0 AND deleted_at IS NULL AND include_in_net_worth = 1${allowAccounts.clause}`,
         ...accountScope.params,
+        ...allowAccounts.params,
       );
       const baselineCents = total?.s ?? 0;
 
@@ -74,9 +84,10 @@ export function createProjectionService(db: Db = getDb()) {
              FROM transactions t
              JOIN accounts a ON a.id = t.account_id
              LEFT JOIN categories c ON c.id = t.user_category_id
-            WHERE ${txnScope.clause} AND a.deleted_at IS NULL AND t.is_transfer = 0 AND t.amount_cents > 0 AND t.date >= ? AND t.date < ?
+            WHERE ${txnScope.clause} AND a.deleted_at IS NULL AND t.is_transfer = 0 AND t.amount_cents > 0${allowTxns.clause} AND t.date >= ? AND t.date < ?
               ${includePending ? "" : "AND t.pending = 0"} AND c.name = 'Income'`,
           ...txnScope.params,
+          ...allowTxns.params,
           r.start,
           r.end
         );

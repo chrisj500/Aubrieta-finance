@@ -1,9 +1,10 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { noContent, ok, parseBody, parseParam, route } from "@/lib/api";
+import { apiErrors, noContent, ok, parseBody, parseParam, route } from "@/lib/api";
 import { requireCsrf, requireSession } from "@/server/auth/service";
 import { requireSessionOrAgent, agentRoute } from "@/server/authz/agent-auth";
 import { createTransactionsService } from "@/server/domain/transactions";
+import { createAccountsService } from "@/server/domain/accounts";
 import { getDb } from "@/server/db/adapter";
 
 export const runtime = "nodejs";
@@ -25,6 +26,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const id = await parseParam(ctx, "id");
     const userId = auth.kind === "agent" ? auth.ctx.userId : auth.userId;
     const transaction = await createTransactionsService(getDb()).get(userId, id);
+    if (auth.kind === "agent") {
+      const visible = await createAccountsService(getDb()).listForAgent(userId, auth.ctx.scopes, auth.ctx.accountIds);
+      if (!visible.some((account) => account.id === transaction.account_id)) throw apiErrors.notFound("Transaction");
+    }
     return ok({ transaction });
   })(req, ctx);
 }
@@ -37,6 +42,13 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const id = await parseParam(ctx, "id");
     const body = await parseBody(updateSchema, req);
     const userId = auth.kind === "agent" ? auth.ctx.userId : auth.userId;
+    if (auth.kind === "agent") {
+      const visible = await createAccountsService(getDb()).listForAgent(userId, auth.ctx.scopes, auth.ctx.accountIds);
+      const visibleIds = new Set(visible.map((account) => account.id));
+      const current = await createTransactionsService(getDb()).get(userId, id);
+      if (!visibleIds.has(current.account_id)) throw apiErrors.notFound("Transaction");
+      if (body.accountId && !visibleIds.has(body.accountId)) throw apiErrors.notFound("Account");
+    }
     const transaction = await createTransactionsService(getDb()).update(userId, id, body);
     return ok({ transaction });
   })(req, ctx);

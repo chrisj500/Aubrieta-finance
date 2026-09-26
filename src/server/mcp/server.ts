@@ -89,6 +89,20 @@ function jsonType(schema: z.ZodType): string {
 const money = z.number().int().positive();
 const optional = <T extends z.ZodType>(s: T) => s.optional();
 
+async function visibleAccountIds(auth: McpAuth): Promise<string[]> {
+  const accounts = await createAccountsService(getDb()).listForAgent(auth.userId, auth.scopes, auth.accountIds);
+  return accounts.map((account) => account.id);
+}
+
+async function visibleTransaction(auth: McpAuth, transactionId: string) {
+  const transaction = await createTransactionsService(getDb()).get(auth.userId, transactionId);
+  const ids = await visibleAccountIds(auth);
+  if (!ids.includes(transaction.account_id)) {
+    throw new McpError(ErrorCode.InvalidParams, "Transaction not found.");
+  }
+  return transaction;
+}
+
 const TOOLS: ToolDef[] = [
   {
     name: "get_financial_summary",
@@ -174,7 +188,7 @@ const TOOLS: ToolDef[] = [
       const { rows } = await createTransactionsService(getDb()).list(auth.userId, {
         limit: limit ?? 50,
         offset: 0,
-        accountIds: auth.accountIds,
+        accountIds: await visibleAccountIds(auth),
       });
       return { transactions: rows };
     },
@@ -191,7 +205,7 @@ const TOOLS: ToolDef[] = [
         q,
         limit: limit ?? 50,
         offset: 0,
-        accountIds: auth.accountIds,
+        accountIds: await visibleAccountIds(auth),
       });
       return { transactions: rows };
     },
@@ -204,7 +218,7 @@ const TOOLS: ToolDef[] = [
     run: async (auth, args) => {
       // SAFETY: args is the zod-validated output of tool.parse().safeParse() at the MCP dispatch boundary; this cast restates the validated shape.
       const { transactionId } = args as { transactionId: string };
-      const transaction = await createTransactionsService(getDb()).get(auth.userId, transactionId);
+      const transaction = await visibleTransaction(auth, transactionId);
       return { transaction };
     },
   },
@@ -247,7 +261,7 @@ const TOOLS: ToolDef[] = [
         categoryId: null,
         limit: limit ?? 50,
         offset: 0,
-        accountIds: auth.accountIds,
+        accountIds: await visibleAccountIds(auth),
       };
       // backlogMonths 0 = moving-forward mode: no history window, list the
       // newest uncategorized transactions so the agent can categorize as they
@@ -268,7 +282,7 @@ const TOOLS: ToolDef[] = [
     inputSchema: jsonSchema({}),
     parse: () => z.object({}),
     run: async (auth) => {
-      const budgets = await createBudgetsService(getDb()).list(auth.userId);
+      const budgets = await createBudgetsService(getDb()).list(auth.userId, undefined, undefined, true, { accountIds: auth.accountIds });
       return { budgets };
     },
   },
@@ -278,7 +292,7 @@ const TOOLS: ToolDef[] = [
     inputSchema: jsonSchema({}),
     parse: () => z.object({}),
     run: async (auth) => {
-      const budgets = await createBudgetsService(getDb()).list(auth.userId);
+      const budgets = await createBudgetsService(getDb()).list(auth.userId, undefined, undefined, true, { accountIds: auth.accountIds });
       const progress = budgets.map((b) => ({
         id: b.id,
         name: b.name,
@@ -305,7 +319,7 @@ const TOOLS: ToolDef[] = [
         planning.listDebts(auth.userId),
         planning.listGoals(auth.userId),
         planning.getPaydays(auth.userId),
-        createProjectionService(getDb()).project(auth.userId),
+        createProjectionService(getDb()).project(auth.userId, 12, true, true, { accountIds: auth.accountIds }),
       ]);
       return { bills, debts, goals, paydays, projection };
     },
@@ -318,7 +332,7 @@ const TOOLS: ToolDef[] = [
     run: async (auth, args) => {
       // SAFETY: args is the zod-validated output of tool.parse().safeParse() at the MCP dispatch boundary; this cast restates the validated shape.
       const { from, to } = args as { from: string; to: string };
-      const rows = await createReportsService(getDb()).spendingByCategory(auth.userId, from, to);
+      const rows = await createReportsService(getDb()).spendingByCategory(auth.userId, from, to, { accountIds: auth.accountIds });
       return { rows };
     },
   },
@@ -330,7 +344,7 @@ const TOOLS: ToolDef[] = [
     run: async (auth, args) => {
       // SAFETY: args is the zod-validated output of tool.parse().safeParse() at the MCP dispatch boundary; this cast restates the validated shape.
       const { months } = args as { months?: number };
-      const rows = await createReportsService(getDb()).cashflow(auth.userId, months ?? 6);
+      const rows = await createReportsService(getDb()).cashflow(auth.userId, months ?? 6, { accountIds: auth.accountIds });
       return { rows };
     },
   },
@@ -340,7 +354,7 @@ const TOOLS: ToolDef[] = [
     inputSchema: jsonSchema({}),
     parse: () => z.object({}),
     run: async (auth) => {
-      const netWorth = await createReportsService(getDb()).netWorth(auth.userId);
+      const netWorth = await createReportsService(getDb()).netWorth(auth.userId, { accountIds: auth.accountIds });
       return { netWorth };
     },
   },
@@ -352,6 +366,7 @@ const TOOLS: ToolDef[] = [
     run: async (auth, args) => {
       // SAFETY: args is the zod-validated output of tool.parse().safeParse() at the MCP dispatch boundary; this cast restates the validated shape.
       const { transactionId, categoryId } = args as { transactionId: string; categoryId: string | null };
+      await visibleTransaction(auth, transactionId);
       const transaction = await createTransactionsService(getDb()).update(auth.userId, transactionId, {
         userCategoryId: categoryId,
       });

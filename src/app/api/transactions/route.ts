@@ -4,6 +4,7 @@ import { apiErrors, ok, parseBody, route } from "@/lib/api";
 import { requireCsrf, requireSession } from "@/server/auth/service";
 import { requireSessionOrAgent, agentRoute } from "@/server/authz/agent-auth";
 import { createTransactionsService } from "@/server/domain/transactions";
+import { createAccountsService } from "@/server/domain/accounts";
 import { MAX_AMOUNT_CENTS } from "@/server/domain/money";
 import { getDb } from "@/server/db/adapter";
 
@@ -46,10 +47,13 @@ export async function GET(req: NextRequest) {
       throw apiErrors.badRequest(parsed.error.issues.map((i) => i.message).join("; "));
     }
     const userId = auth.kind === "agent" ? auth.ctx.userId : auth.userId;
+    const agentAccountIds = auth.kind === "agent"
+      ? (await createAccountsService(getDb()).listForAgent(userId, auth.ctx.scopes, auth.ctx.accountIds)).map((a) => a.id)
+      : undefined;
     const filters = {
       ...parsed.data,
       review: parsed.data.review === true,
-      accountIds: auth.kind === "agent" ? auth.ctx.accountIds : undefined,
+      accountIds: agentAccountIds,
       pendingOnly: parsed.data.pending === true,
     };
     const result = await createTransactionsService(getDb()).list(userId, filters);

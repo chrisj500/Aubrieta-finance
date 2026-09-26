@@ -27,7 +27,8 @@ export async function GET(req: NextRequest) {
       auth.kind === "agent" ? auth.ctx.userId : auth.userId,
       parsed.data.months,
       parsed.data.includeGoals,
-      req.nextUrl.searchParams.get("includePending") !== "0"
+      req.nextUrl.searchParams.get("includePending") !== "0",
+      auth.kind === "agent" ? auth.ctx.allowlist : null,
     );
     return ok(projection);
   })(req, { params: Promise.resolve({}) });

@@ -6,6 +6,10 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { getSqliteDb } from "@/server/db/adapter";
 import { createAgentTokenService } from "@/server/authz/tokens";
 import { createAgentPrefsService } from "@/server/domain/agent-prefs";
+import { createAccountsService } from "@/server/domain/accounts";
+import { createTransactionsService } from "@/server/domain/transactions";
+import { createCategoriesService } from "@/server/domain/categories";
+import { createBudgetsService } from "@/server/domain/budgets";
 import { authFromToken, createOpenFinanceMcpServer } from "@/server/mcp/server";
 import { seedUser } from "./helpers";
 
@@ -141,5 +145,93 @@ describe("MCP transport enforces user Settings caps", () => {
     await createAgentPrefsService(db).update(user.id, { tabs: ["activity"] });
     auth = await authFromToken(token);
     expect(auth.scopes).not.toContain("read:budgets");
+  });
+});
+
+describe("MCP account-scope isolation", () => {
+  it("banking-only tokens do not receive investment transactions", async () => {
+    const db = getSqliteDb();
+    const user = await seedUser(db, `mcp-txn-type-${Date.now()}`);
+    await createAgentPrefsService(db).update(user.id, { global: true });
+    const accounts = createAccountsService(db);
+    const checking = await accounts.createManual(user.id, { name: "MCP Checking", type: "depository" });
+    const brokerage = await accounts.createManual(user.id, { name: "MCP Brokerage", type: "investment" });
+    await createTransactionsService(db).createManual(user.id, { accountId: checking.id, amountCents: -1000, date: "2026-09-26", name: "MCP checking txn" });
+    const investmentTxn = await createTransactionsService(db).createManual(user.id, { accountId: brokerage.id, amountCents: -2000, date: "2026-09-26", name: "MCP investment txn" });
+    const { token } = await createAgentTokenService(db).create(user.id, { name: "mcp-bank", preset: "custom", scopes: ["read:banking"] });
+    const client = await connectMcp(token);
+
+    const listed = await client.callTool({ name: "list_transactions", arguments: { limit: 20 } });
+    const text = (listed.content as Array<{ text?: string }> | undefined)?.[0]?.text ?? "";
+    expect(text).toContain("MCP checking txn");
+    expect(text).not.toContain("MCP investment txn");
+    await expect(client.callTool({ name: "get_transaction", arguments: { transactionId: investmentTxn.id } })).rejects.toThrow(/Transaction not found/i);
+
+    await client.close();
+  });
+
+  it("reports, budget progress, and projection honor the token account allowlist", async () => {
+    const db = getSqliteDb();
+    const user = await seedUser(db, `mcp-aggregate-${Date.now()}`);
+    await createAgentPrefsService(db).update(user.id, { global: true });
+    const accounts = createAccountsService(db);
+    const allowed = await accounts.createManual(user.id, { name: "MCP Aggregate Allowed", type: "depository", currentBalanceCents: 100_000 });
+    const blocked = await accounts.createManual(user.id, { name: "MCP Aggregate Blocked", type: "depository", currentBalanceCents: 900_000 });
+    const category = await createCategoriesService(db).create(user.id, { name: `MCP Aggregate ${Date.now()}` });
+    await createTransactionsService(db).createManual(user.id, { accountId: allowed.id, amountCents: -1_000, date: "2026-09-26", name: "MCP allowed spend", userCategoryId: category.id });
+    await createTransactionsService(db).createManual(user.id, { accountId: blocked.id, amountCents: -9_000, date: "2026-09-26", name: "MCP blocked spend", userCategoryId: category.id });
+    await createBudgetsService(db).create(user.id, { name: "MCP scoped budget", amountCents: 20_000, categoryIds: [category.id] });
+    const { token } = await createAgentTokenService(db).create(user.id, {
+      name: "mcp-aggregate-reader",
+      preset: "custom",
+      scopes: ["read:reports", "read:budgets", "read:planning"],
+      accountIds: [allowed.id],
+    });
+    const client = await connectMcp(token);
+
+    const net = await client.callTool({ name: "get_net_worth", arguments: {} });
+    const netText = (net.content as Array<{ text?: string }> | undefined)?.[0]?.text ?? "";
+    expect(netText).toContain('"netCents": 100000');
+    expect(netText).not.toContain("1000000");
+
+    const budgets = await client.callTool({ name: "get_budgets", arguments: {} });
+    const budgetText = (budgets.content as Array<{ text?: string }> | undefined)?.[0]?.text ?? "";
+    expect(budgetText).toContain('"spentCents": 1000');
+    expect(budgetText).not.toContain('"spentCents": 10000');
+
+    const planning = await client.callTool({ name: "get_planning_items", arguments: {} });
+    const planningText = (planning.content as Array<{ text?: string }> | undefined)?.[0]?.text ?? "";
+    expect(planningText).toContain('"baselineCents": 100000');
+    expect(planningText).not.toContain('"baselineCents": 1000000');
+
+    await client.close();
+  });
+
+  it("transaction category writes honor the token account allowlist", async () => {
+    const db = getSqliteDb();
+    const user = await seedUser(db, `mcp-txn-allow-${Date.now()}`);
+    await createAgentPrefsService(db).update(user.id, { global: true });
+    const accounts = createAccountsService(db);
+    const allowed = await accounts.createManual(user.id, { name: "MCP Allowed", type: "depository" });
+    const blocked = await accounts.createManual(user.id, { name: "MCP Blocked", type: "depository" });
+    const allowedTxn = await createTransactionsService(db).createManual(user.id, { accountId: allowed.id, amountCents: -1000, date: "2026-09-26", name: "MCP allowed txn" });
+    const blockedTxn = await createTransactionsService(db).createManual(user.id, { accountId: blocked.id, amountCents: -1000, date: "2026-09-26", name: "MCP blocked txn" });
+    const category = await createCategoriesService(db).create(user.id, { name: `Scoped ${Date.now()}` });
+    const { token } = await createAgentTokenService(db).create(user.id, {
+      name: "mcp-editor",
+      preset: "custom",
+      scopes: ["read:banking", "transactions:edit"],
+      accountIds: [allowed.id],
+    });
+    const client = await connectMcp(token);
+
+    await expect(client.callTool({ name: "set_transaction_category", arguments: { transactionId: blockedTxn.id, categoryId: category.id } })).rejects.toThrow(/Transaction not found/i);
+    expect((await createTransactionsService(db).get(user.id, blockedTxn.id)).user_category_id).toBeNull();
+
+    const accepted = await client.callTool({ name: "set_transaction_category", arguments: { transactionId: allowedTxn.id, categoryId: category.id } });
+    expect(accepted.isError).toBeFalsy();
+    expect((await createTransactionsService(db).get(user.id, allowedTxn.id)).user_category_id).toBe(category.id);
+
+    await client.close();
   });
 });

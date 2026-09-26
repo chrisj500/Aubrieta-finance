@@ -4,6 +4,7 @@ import { assertValidCents } from "@/server/domain/money";
 import { getDb, type Db } from "@/server/db/registry";
 import { todayISO, addMonthsISO } from "@/server/domain/dates";
 import type { TransactionRow } from "@/server/domain/transactions";
+import { withAllowlist, type AllowlistCtx } from "@/server/db/allowlist";
 import {
   accountReadScope,
   assertObjectManageable,
@@ -135,7 +136,8 @@ async function spendFilter(
   budgetId: string,
   start: string,
   end: string,
-  includePending: boolean
+  includePending: boolean,
+  allowlist?: AllowlistCtx | null
 ): Promise<{ clause: string; params: unknown[] }> {
   const budgetScope = await objectReadScope(db, userId, "b");
   const budget = await db.get<{
@@ -159,15 +161,17 @@ async function spendFilter(
   const categoryNames = [...new Set(cats.map((c) => c.name.trim().toLowerCase()).filter(Boolean))];
 
   let accountClause: string;
-  let params: unknown[];
+  let accountParams: unknown[];
   if (budget.visibility === "shared" && budget.household_id) {
     accountClause = "a.household_id = ? AND a.visibility = 'shared'";
-    params = [budget.household_id, start, end];
+    accountParams = [budget.household_id];
   } else {
     const accountScope = await accountReadScope(db, userId, "a");
     accountClause = accountScope.clause;
-    params = [...accountScope.params, start, end];
+    accountParams = [...accountScope.params];
   }
+  const allow = withAllowlist(allowlist ?? null, "a.id");
+  const params: unknown[] = [...accountParams, ...allow.params, start, end];
 
   let categoryClause: string;
   if (categoryNames.length === 0) {
@@ -183,7 +187,7 @@ async function spendFilter(
 
   const pendingClause = includePending ? "" : " AND t.pending = 0";
   return {
-    clause: `${accountClause} AND a.deleted_at IS NULL AND t.date >= ? AND t.date < ?
+    clause: `${accountClause}${allow.clause} AND a.deleted_at IS NULL AND t.date >= ? AND t.date < ?
              AND t.exclude_from_budgets = 0 AND t.is_transfer = 0 AND t.amount_cents < 0${pendingClause}
              AND ${categoryClause}`,
     params,
@@ -225,7 +229,8 @@ export function createBudgetsService(db: Db = getDb()) {
       userId: string,
       referenceDate: string = todayISO(),
       frame: BudgetFrame = { kind: "period" },
-      includePending = true
+      includePending = true,
+      allowlist?: AllowlistCtx | null
     ): Promise<BudgetWithProgress[]> {
       const scope = await objectReadScope(db, userId, "b");
       const budgets = await db.all<BudgetRow>(
@@ -244,7 +249,7 @@ export function createBudgetsService(db: Db = getDb()) {
         const periodWindow = periodBounds(b.period, referenceDate);
         const { start, end } =
           frame.kind === "period" ? periodWindow : frameBounds(frame, referenceDate);
-        const spent = await this.spendCents(userId, b.id, start, end, includePending);
+        const spent = await this.spendCents(userId, b.id, start, end, includePending, allowlist);
         // When viewing a frame other than the budget's own period, prorate the
         // limit to that window so "spent vs limit" is honest (a monthly budget
         // viewed over a week shouldn't show a $500 limit with $20 spent as if
@@ -275,8 +280,8 @@ export function createBudgetsService(db: Db = getDb()) {
      * budget's categories. A budget with no categories tracks "Uncategorized"
      * (user_category_id IS NULL) — the fallback for manual/uncategorized rows.
      */
-    async spendCents(userId: string, budgetId: string, start: string, end: string, includePending = true): Promise<number> {
-      const { clause, params } = await spendFilter(db, userId, budgetId, start, end, includePending);
+    async spendCents(userId: string, budgetId: string, start: string, end: string, includePending = true, allowlist?: AllowlistCtx | null): Promise<number> {
+      const { clause, params } = await spendFilter(db, userId, budgetId, start, end, includePending, allowlist);
       const row = await db.get<{ s: number }>(
         `SELECT COALESCE(SUM(-t.amount_cents), 0) AS s
           FROM transactions t
@@ -297,7 +302,8 @@ export function createBudgetsService(db: Db = getDb()) {
       budgetId: string,
       referenceDate: string = todayISO(),
       frame: BudgetFrame = { kind: "period" },
-      includePending = true
+      includePending = true,
+      allowlist?: AllowlistCtx | null
     ): Promise<TransactionRow[]> {
       const scope = await objectReadScope(db, userId, "b");
       const budget = await db.get<BudgetRow>(
@@ -308,7 +314,7 @@ export function createBudgetsService(db: Db = getDb()) {
       if (!budget) throw apiErrors.notFound("Budget");
       const { start, end } =
         frame.kind === "period" ? periodBounds(budget.period, referenceDate) : frameBounds(frame, referenceDate);
-      const { clause, params } = await spendFilter(db, userId, budgetId, start, end, includePending);
+      const { clause, params } = await spendFilter(db, userId, budgetId, start, end, includePending, allowlist);
       return db.all<TransactionRow>(
         `SELECT t.*, a.name AS account_name, c.name AS category_name, c.color AS category_color
            FROM transactions t

@@ -160,6 +160,119 @@ describe("solo remote access", () => {
     expect((status.data as { token?: string }).token).toBeUndefined();
   });
 
+
+  it("remote token cannot change its own access caps or reach provider credential routes", async () => {
+    const userId = await seedUser(db);
+    const raw = "t_" + "scope1".repeat(8);
+    await enableRemote(db, raw);
+
+    const escalate = await soloDispatch({
+      method: "PUT",
+      path: "/api/agent/prefs",
+      query: new URLSearchParams(),
+      body: { global: true, globalWrite: true },
+      headers: { authorization: `Bearer ${raw}` },
+    });
+    expect(escalate.status).toBe(403);
+    const { createAgentPrefsService } = await import("@/server/domain/agent-prefs");
+    const prefs = await createAgentPrefsService(db).get(userId);
+    expect(prefs.global).toBe(false);
+    expect(prefs.globalWrite).toBe(false);
+
+    const creds = await soloDispatch({
+      method: "GET",
+      path: "/api/plaid/credentials",
+      query: new URLSearchParams(),
+      body: undefined,
+      headers: { authorization: `Bearer ${raw}` },
+    });
+    expect(creds.status).toBe(403);
+  });
+
+  it("banking-only remote access hides investment accounts and transactions", async () => {
+    const userId = await seedUser(db);
+    const { createAccountsService } = await import("@/server/domain/accounts");
+    const { createTransactionsService } = await import("@/server/domain/transactions");
+    const accounts = createAccountsService(db);
+    const checking = await accounts.createManual(userId, { name: "Checking", type: "depository" });
+    const brokerage = await accounts.createManual(userId, { name: "Brokerage", type: "investment" });
+    const txns = createTransactionsService(db);
+    const checkingTxn = await txns.createManual(userId, { accountId: checking.id, amountCents: -1000, date: "2026-09-26", name: "Checking txn" });
+    const investmentTxn = await txns.createManual(userId, { accountId: brokerage.id, amountCents: -2000, date: "2026-09-26", name: "Investment txn" });
+    const raw = "t_" + "scope2".repeat(8);
+    await enableRemote(db, raw);
+
+    const accountList = await soloDispatch({ method: "GET", path: "/api/accounts", query: new URLSearchParams(), body: undefined, headers: { authorization: `Bearer ${raw}` } });
+    expect(accountList.status).toBe(200);
+    const accountIds = ((accountList.data as { accounts: Array<{ id: string }> }).accounts).map((a) => a.id);
+    expect(accountIds).toContain(checking.id);
+    expect(accountIds).not.toContain(brokerage.id);
+
+    const hiddenAccount = await soloDispatch({ method: "GET", path: `/api/accounts/${brokerage.id}`, query: new URLSearchParams(), body: undefined, headers: { authorization: `Bearer ${raw}` } });
+    expect(hiddenAccount.status).toBe(404);
+
+    const txnList = await soloDispatch({ method: "GET", path: "/api/transactions", query: new URLSearchParams(), body: undefined, headers: { authorization: `Bearer ${raw}` } });
+    expect(txnList.status).toBe(200);
+    const txnIds = ((txnList.data as { rows: Array<{ id: string }> }).rows).map((t) => t.id);
+    expect(txnIds).toContain(checkingTxn.id);
+    expect(txnIds).not.toContain(investmentTxn.id);
+
+    const hiddenTxn = await soloDispatch({ method: "GET", path: `/api/transactions/${investmentTxn.id}`, query: new URLSearchParams(), body: undefined, headers: { authorization: `Bearer ${raw}` } });
+    expect(hiddenTxn.status).toBe(404);
+  });
+
+  it("remote transaction writes require explicit activity-write scope", async () => {
+    const userId = await seedUser(db);
+    const { createAccountsService } = await import("@/server/domain/accounts");
+    const { createTransactionsService } = await import("@/server/domain/transactions");
+    const { createAgentPrefsService } = await import("@/server/domain/agent-prefs");
+    const account = await createAccountsService(db).createManual(userId, { name: "Checking", type: "depository" });
+    const txn = await createTransactionsService(db).createManual(userId, { accountId: account.id, amountCents: -1000, date: "2026-09-26", name: "Scoped txn" });
+    const raw = "t_" + "scope3".repeat(8);
+    await enableRemote(db, raw);
+
+    const denied = await soloDispatch({
+      method: "PATCH", path: `/api/transactions/${txn.id}`, query: new URLSearchParams(), body: { userNote: "blocked" },
+      headers: { authorization: `Bearer ${raw}` },
+    });
+    expect(denied.status).toBe(403);
+    expect((denied.data as { error: { code: string } }).error.code).toBe("insufficient_scope");
+
+    await createAgentPrefsService(db).update(userId, { autoCategorize: true });
+    const allowed = await soloDispatch({
+      method: "PATCH", path: `/api/transactions/${txn.id}`, query: new URLSearchParams(), body: { userNote: "allowed" },
+      headers: { authorization: `Bearer ${raw}` },
+    });
+    expect(allowed.status).toBe(200);
+    expect((await createTransactionsService(db).get(userId, txn.id)).user_note).toBe("allowed");
+  });
+
+  it("remote route policy stays default-deny for nested and user-only solo routes", async () => {
+    const userId = await seedUser(db);
+    const { createAgentPrefsService } = await import("@/server/domain/agent-prefs");
+    await createAgentPrefsService(db).update(userId, { global: true, globalWrite: true });
+    const raw = "t_" + "scope4".repeat(8);
+    await enableRemote(db, raw);
+
+    for (const [method, path] of [
+      ["GET", "/api/planning/paydays"],
+      ["GET", "/api/budgets/not-an-id/transactions"],
+      ["GET", "/api/accounts/order"],
+      ["GET", "/api/reports/net-worth/trend"],
+      ["PATCH", "/api/custom-views/id/extra"],
+    ] as const) {
+      const res = await soloDispatch({
+        method,
+        path,
+        query: new URLSearchParams(),
+        body: method === "PATCH" ? {} : undefined,
+        headers: { authorization: `Bearer ${raw}` },
+      });
+      expect(res.status, `${method} ${path}`).toBe(403);
+      expect((res.data as { error: { code: string } }).error.code).toBe("forbidden");
+    }
+  });
+
   it("disables remote access by deleting the token", async () => {
     await seedUser(db);
     await db.run("INSERT INTO app_state (key, value, updated_at) VALUES ('remote.agent.token', ?, ?)", hashSecret("tok"), new Date().toISOString());
