@@ -6,9 +6,11 @@ import { useEscapeToClose } from "@/lib/use-escape-to-close";
 import { useDialogA11y } from "@/lib/use-dialog-a11y";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
-import { CalendarClock, CalendarDays, X } from "lucide-react";
+import { CalendarClock, CalendarDays, CircleAlert, ReceiptText, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardTitle } from "@/components/ui/card";
+import { Page, PageHeader } from "@/components/ui/page";
+import { MetricCard } from "@/components/ui/metric-card";
 import { Progress } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -291,6 +293,7 @@ export default function PlanPage() {
         `/api/planning/bill-occurrences?from=${occurrenceRange.from}&to=${occurrenceRange.to}`
       ),
   });
+  const [showAllOccurrences, setShowAllOccurrences] = useState(false);
   const debts = useQuery({ queryKey: ["planning", "debts"], queryFn: () => api.get<{ debts: Debt[] }>("/api/planning/debts") });
   const goals = useQuery({ queryKey: ["planning", "goals"], queryFn: () => api.get<{ goals: Goal[] }>("/api/planning/goals") });
   const projection = useQuery({
@@ -522,6 +525,15 @@ export default function PlanPage() {
   const [undoGoal, setUndoGoal] = useState<Goal | null>(null);
 
   const chartData = (projection.data?.points ?? []).map((p) => ({ month: p.month, Balance: p.balanceCents / 100 }));
+  const activeBillCount = (bills.data?.bills ?? []).filter((b) => b.active).length;
+  const overdueBillCount = digest.data?.overdueBills.length ?? 0;
+  const visibleOccurrences = useMemo(() => {
+    const all = occurrences.data?.occurrences ?? [];
+    if (showAllOccurrences) return all;
+    const today = iso(new Date());
+    const focusUntil = iso(addDays(new Date(), 30));
+    return all.filter((o) => o.status === "overdue" || (o.status === "upcoming" && o.due_date >= today && o.due_date <= focusUntil));
+  }, [occurrences.data?.occurrences, showAllOccurrences]);
 
   const horizonCaption =
     horizon === "paycheck" && manualPayday
@@ -537,8 +549,11 @@ export default function PlanPage() {
               : `next ${horizonUntil.days ?? 30} days`;
 
   return (
-    <div className="space-y-6">
-      <h1 className="sr-only">Plan</h1>
+    <Page>
+      <PageHeader
+        title="Plan"
+        description="Stay ahead of bills first, then plan for debt, goals, and the months ahead."
+      />
       {err && <p className="text-sm text-danger">{err}</p>}
       {hasFailed && (
         <Card className="border-danger/30 bg-[var(--danger-soft)]">
@@ -554,6 +569,34 @@ export default function PlanPage() {
           </div>
         </Card>
       )}
+      <section aria-labelledby="bills-overview-heading" className="space-y-4">
+        <div>
+          <h2 id="bills-overview-heading" className="text-lg font-semibold text-text">Bills</h2>
+          <p className="mt-1 text-sm text-text-muted">What needs attention now, before longer-range planning.</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MetricCard
+            label="Due in view"
+            value={<Money cents={digest.data?.totalUpcomingCents ?? 0} />}
+            hint={horizonCaption}
+            icon={<CalendarClock size={17} />}
+          />
+          <MetricCard
+            label="Overdue"
+            value={overdueBillCount}
+            hint={overdueBillCount === 1 ? "bill needs attention" : "bills need attention"}
+            icon={<CircleAlert size={17} />}
+            tone={overdueBillCount > 0 ? "danger" : "default"}
+          />
+          <MetricCard
+            label="Active bills"
+            value={activeBillCount}
+            hint="manual and provider-backed"
+            icon={<ReceiptText size={17} />}
+          />
+        </div>
+      </section>
+
       {/* Upcoming bills digest */}
       <Card>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -755,26 +798,36 @@ export default function PlanPage() {
           <div>
             <CardTitle>Bill calendar</CardTitle>
             <p className="mt-1 text-xs text-text-muted">
-              Past 45 days and next 120 days · paid matching is automatic when evidence is strong.
+              Next 30 days plus anything overdue · paid matching is automatic when evidence is strong.
             </p>
           </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={async () => {
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowAllOccurrences((v) => !v)}
+              aria-expanded={showAllOccurrences}
+            >
+              {showAllOccurrences ? "Show next 30 days" : "Show all 165 days"}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={async () => {
               try {
                 await api.post("/api/planning/bills/refresh");
                 invalidate();
               } catch (e) {
                 setErr(e instanceof Error ? e.message : "Could not refresh bill intelligence.");
               }
-            }}
-          >
-            Refresh bills
-          </Button>
+              }}
+            >
+              Refresh bills
+            </Button>
+          </div>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {(occurrences.data?.occurrences ?? []).map((o) => (
+          {visibleOccurrences.map((o) => (
             <div
               key={o.id}
               className={`rounded-lg border px-3 py-2.5 text-sm ${
@@ -809,11 +862,16 @@ export default function PlanPage() {
               </p>
             </div>
           ))}
-          {(occurrences.data?.occurrences ?? []).length === 0 && (
-            <p className="text-sm text-text-muted">No bill occurrences yet.</p>
+          {visibleOccurrences.length === 0 && (
+            <p className="text-sm text-text-muted">No bills due in the next 30 days and nothing overdue.</p>
           )}
         </div>
       </Card>
+
+      <section aria-labelledby="planning-ahead-heading" className="pt-2">
+        <h2 id="planning-ahead-heading" className="text-lg font-semibold text-text">Plan ahead</h2>
+        <p className="mt-1 text-sm text-text-muted">Forecast cash flow, debt payoff, upcoming expenses, and goals.</p>
+      </section>
 
       {/* Projection */}
       <Card>
@@ -1478,6 +1536,6 @@ export default function PlanPage() {
         onUndo={() => undoGoal && undoDeleteGoal.mutate(undoGoal)}
         onClose={() => setUndoGoal(null)}
       />
-    </div>
+    </Page>
   );
 }
