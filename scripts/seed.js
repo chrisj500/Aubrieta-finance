@@ -113,9 +113,11 @@ const insAcc = db.prepare(
 const checking = uid();
 const savings = uid();
 const credit = uid();
+const brokerage = uid();
 insAcc.run(checking, demoUserId, "Checking", "depository", 421350, 421350, now());
 insAcc.run(savings, demoUserId, "Savings", "depository", 1250000, 1250000, now());
 insAcc.run(credit, demoUserId, "Credit Card", "credit", -84325, -84325, now());
+insAcc.run(brokerage, demoUserId, "Brokerage", "investment", 1850000, 1850000, now());
 
 // ── transactions: 3 months before seed date + the seed month itself ─────────
 const insTxn = db.prepare(
@@ -192,6 +194,7 @@ function seedHistory(accountId, finalCents, dailyDriftCents) {
 seedHistory(checking, 421350, 1850); // checking grew ~$18.50/day
 seedHistory(savings, 1250000, 4200); // savings grew ~$42/day
 seedHistory(credit, -84325, -620); // card debt shrank ~$6.20/day (stored negative)
+seedHistory(brokerage, 1850000, 6100); // portfolio balance drift for demo trend
 
 // M3 household model: the CLI demo seed can run after migration 026 has
 // already been recorded, so users created by the seed are not covered by the
@@ -221,6 +224,48 @@ if (hasHouseholds) {
           SET household_id = ?, owner_user_id = ?, visibility = 'shared'
         WHERE user_id = ?`
     ).run(householdId, demoUserId, demoUserId);
+  }
+
+  const hasInvestmentHoldings = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'investment_holdings'"
+  ).get();
+  if (hasInvestmentHoldings) {
+    const connectionId = `demo-investments:${demoUserId}`;
+    db.prepare(
+      `INSERT INTO provider_connections (
+         id, user_id, household_id, provider, external_connection_id,
+         institution_name, status, capabilities_json, created_at, updated_at
+       ) VALUES (?, ?, ?, 'demo', ?, 'Aubrieta Demo Brokerage', 'active',
+         '["accounts","balances","investments"]', ?, ?)`
+    ).run(connectionId, demoUserId, householdId, connectionId, ts, ts);
+    db.prepare(
+      `INSERT INTO account_provider_refs (
+         id, user_id, account_id, connection_id, provider, external_account_id,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'demo', 'demo-brokerage', ?, ?)`
+    ).run(`demo-ref:${brokerage}`, demoUserId, brokerage, connectionId, ts, ts);
+
+    const security = db.prepare(
+      `INSERT INTO investment_securities (
+         id, user_id, connection_id, provider, external_security_id, name, ticker,
+         security_type, currency, updated_at
+       ) VALUES (?, ?, ?, 'demo', ?, ?, ?, 'equity', 'USD', ?)`
+    );
+    const holding = db.prepare(
+      `INSERT INTO investment_holdings (
+         id, user_id, account_id, security_id, connection_id, provider, quantity,
+         institution_price_cents, institution_value_cents, cost_basis_cents,
+         currency, updated_at
+       ) VALUES (?, ?, ?, ?, ?, 'demo', ?, ?, ?, ?, 'USD', ?)`
+    );
+
+    const vti = uid();
+    security.run(vti, demoUserId, connectionId, "VTI", "Vanguard Total Stock Market ETF", "VTI", ts);
+    holding.run(uid(), demoUserId, brokerage, vti, connectionId, 40, 28500, 1140000, 860000, ts);
+
+    const vxus = uid();
+    security.run(vxus, demoUserId, connectionId, "VXUS", "Vanguard Total International Stock ETF", "VXUS", ts);
+    holding.run(uid(), demoUserId, brokerage, vxus, connectionId, 95, 6200, 589000, 510000, ts);
   }
 }
 
