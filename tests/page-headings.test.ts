@@ -16,8 +16,12 @@ describe("main pages expose a per-page heading", () => {
     expect(src).toContain('title="Overview"');
   });
 
+  it("transactions page has a visible page heading", () => {
+    const src = read("src/app/(app)/transactions/page.tsx");
+    expect(src).toContain('title="Transactions"');
+  });
+
   const cases: Array<[string, string]> = [
-    ["transactions", "src/app/(app)/transactions/page.tsx"],
     ["budgets", "src/app/(app)/budgets/page.tsx"],
     ["reports", "src/app/(app)/reports/page.tsx"],
     ["plan", "src/app/(app)/plan/page.tsx"],
