@@ -5,6 +5,7 @@ import { createIngestService } from "@/server/domain/ingest";
 import { syncProviderLiabilities } from "@/server/domain/liabilities";
 import { createBillIntelligenceService } from "@/server/domain/bill-intelligence";
 import { markLinkedTransfers } from "@/server/domain/transfers";
+import { getHouseholdContext } from "@/server/authz/household-access";
 import { ensureAccountProviderRef } from "./connections";
 import type {
   FinancialProvider,
@@ -80,6 +81,7 @@ export async function syncProviderConnection(
   }
 
   const providerKind = input.provider.descriptor.kind;
+  const household = await getHouseholdContext(db, input.userId);
   const freshAccounts = await input.provider.listAccounts(input.connectionSecret);
   const refs = await db.all<{
     account_id: string;
@@ -103,11 +105,14 @@ export async function syncProviderConnection(
       accountId = randomUUID();
       await db.run(
         `INSERT INTO accounts (
-           id, user_id, item_id, plaid_account_id, name, official_name, type,
+           id, user_id, household_id, owner_user_id, visibility,
+           item_id, plaid_account_id, name, official_name, type,
            subtype, mask, current_balance_cents, available_balance_cents,
            currency, created_at
-         ) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, 'shared', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         accountId,
+        input.userId,
+        household?.householdId ?? null,
         input.userId,
         account.name,
         account.officialName ?? null,
