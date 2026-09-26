@@ -21,6 +21,7 @@ const updateSchema = z.object({
   contributionDays: z.array(z.number().int().min(1).max(31)).optional(),
   accountId: z.string().nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
+  visibility: z.enum(["shared", "private"]).optional(),
 });
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
