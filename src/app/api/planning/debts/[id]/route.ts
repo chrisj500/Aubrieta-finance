@@ -19,6 +19,7 @@ const updateSchema = z.object({
   nextDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   accountId: z.string().nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
+  visibility: z.enum(["shared", "private"]).optional(),
 });
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
