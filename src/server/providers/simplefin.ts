@@ -9,8 +9,8 @@ import type {
 } from "./types";
 
 const DAY_SECONDS = 86_400;
-const MAX_REQUEST_DAYS = 90;
-const DEFAULT_LOOKBACK_DAYS = MAX_REQUEST_DAYS;
+const REQUEST_WINDOW_DAYS = 45;
+const DEFAULT_LOOKBACK_DAYS = REQUEST_WINDOW_DAYS;
 const DEFAULT_OVERLAP_DAYS = 5;
 const CURSOR_PREFIX = "sf1:";
 
@@ -337,7 +337,11 @@ function relevantAccounts(set: SimpleFinAccountSet, remoteConnectionId: string):
 }
 
 function isNonFatalLegacyWarning(message: string): boolean {
-  return /requested date range exceeds limit of 90 days and was capped/i.test(message);
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("requested date range exceeds") &&
+    (normalized.includes("was capped") || normalized.includes("may be capped"))
+  );
 }
 
 function checkErrors(set: SimpleFinAccountSet, remoteConnectionId?: string): void {
@@ -530,24 +534,27 @@ export function createSimpleFinProvider(options: SimpleFinProviderOptions = {}):
           : NaN;
       // end-date is exclusive in SimpleFIN. Give today's pending/posted rows a
       // full UTC-day boundary rather than accidentally clipping late entries.
-      const endDate = Math.floor(
+      const currentEndDate = Math.floor(
         Date.UTC(
           nowDate.getUTCFullYear(),
           nowDate.getUTCMonth(),
           nowDate.getUTCDate() + 1,
         ) / 1000,
       );
-      // SimpleFIN limits every /accounts transaction window to 90 days. Clamp
-      // both first syncs and stale cursors so Aubrieta never asks the Bridge
-      // for an oversized range.
-      const maxWindowStart = Math.max(0, endDate - MAX_REQUEST_DAYS * DAY_SECONDS);
+      // The Bridge currently warns above 45 days even though its published
+      // hard limit is 90. Use 45-day windows so normal syncs avoid the warning.
+      // If a saved cursor is stale, advance through history in chunks instead
+      // of jumping to the newest window and silently skipping transactions.
       const initialWindowDays = Math.min(
-        MAX_REQUEST_DAYS,
+        REQUEST_WINDOW_DAYS,
         Math.max(1, initialLookbackDays),
       );
       const startDate = Number.isFinite(parsedCursor)
-        ? Math.max(parsedCursor, maxWindowStart)
-        : Math.max(0, endDate - initialWindowDays * DAY_SECONDS);
+        ? Math.max(0, parsedCursor)
+        : Math.max(0, currentEndDate - initialWindowDays * DAY_SECONDS);
+      const endDate = Number.isFinite(parsedCursor)
+        ? Math.min(currentEndDate, startDate + REQUEST_WINDOW_DAYS * DAY_SECONDS)
+        : currentEndDate;
       const set = await fetchAccountSet(secret.accessUrl, {
         startDate,
         endDate,
@@ -565,10 +572,14 @@ export function createSimpleFinProvider(options: SimpleFinProviderOptions = {}):
         added,
         modified: [],
         removedExternalIds: [],
-        // SimpleFIN has no delta cursor; overlap the next request by five days,
-        // matching the current Bridge developer guidance.
+        // SimpleFIN has no delta cursor. If catching up from a stale cursor,
+        // move forward from this chunk's end; otherwise overlap the current
+        // window by five days, matching Bridge guidance.
         nextCursor: {
-          value: `${CURSOR_PREFIX}${Math.max(0, nowSeconds - overlapDays * DAY_SECONDS)}`,
+          value: `${CURSOR_PREFIX}${Math.max(
+            0,
+            Math.min(nowSeconds, endDate) - overlapDays * DAY_SECONDS,
+          )}`,
         },
       };
     },
