@@ -51,6 +51,17 @@ export interface DataQualityResult {
   };
 }
 
+
+function effectiveMask(row: Pick<AuditAccountRow, "mask" | "name" | "official_name">): string | null {
+  const direct = row.mask?.trim();
+  if (direct) return direct;
+  for (const value of [row.name, row.official_name]) {
+    const match = value?.match(/(?:\(|\b)(\d{4})\)?\s*$/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 function isHealthyStatus(status: string): boolean {
   return status === "active" || status === "linked";
 }
@@ -102,16 +113,17 @@ export function createDataQualityService(db: Db) {
         const reasons: string[] = [];
         if (!row.institution_name) reasons.push("Missing institution");
         if (!row.type || row.type === "other") reasons.push("Generic account type");
-        if (row.type === "credit" && !row.mask) reasons.push("Missing card last four");
+        if (row.type === "credit" && !effectiveMask(row)) reasons.push("Missing card last four");
         return reasons.length ? [{ id: row.id, name: row.name, reasons }] : [];
       });
 
       const duplicateGroups = new Map<string, { institutionName: string; mask: string; type: string; accountNames: string[] }>();
       for (const row of normalizedAccounts) {
-        if (!row.mask || !row.institution_name) continue;
+        const mask = effectiveMask(row);
+        if (!mask || !row.institution_name) continue;
         const type = row.type ?? "other";
-        const key = `${row.institution_name.toLowerCase()}\u0000${row.mask}\u0000${type}`;
-        const existing = duplicateGroups.get(key) ?? { institutionName: row.institution_name, mask: row.mask, type, accountNames: [] };
+        const key = `${row.institution_name.toLowerCase()}\u0000${mask}\u0000${type}`;
+        const existing = duplicateGroups.get(key) ?? { institutionName: row.institution_name, mask, type, accountNames: [] };
         existing.accountNames.push(row.name);
         duplicateGroups.set(key, existing);
       }
@@ -126,7 +138,7 @@ export function createDataQualityService(db: Db) {
           id: item.row.id,
           name: item.row.name,
           institutionName: item.row.institution_name,
-          mask: item.row.mask,
+          mask: effectiveMask(item.row),
         }));
 
       const historyRows = await db.all<{
