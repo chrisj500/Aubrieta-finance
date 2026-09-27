@@ -158,6 +158,65 @@ describe("SimpleFIN provider", () => {
     expect(r1.nextCursor.value).toMatch(/^sf1:\d+$/);
   });
 
+
+  it("caps transaction requests at 90 days and ignores the Bridge capped-range warning", async () => {
+    const seen: URL[] = [];
+    const provider = createSimpleFinProvider({
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        seen.push(url);
+        return json({
+          ...fixture(),
+          errors: ["Requested date range exceeds limit of 90 days and was capped."],
+        });
+      },
+      now: () => new Date("2026-09-26T22:00:00Z"),
+      initialLookbackDays: 730,
+    });
+    const secret: SimpleFinConnectionSecret = {
+      accessUrl: ACCESS_URL,
+      remoteConnectionId: "conn-1",
+      scopeKey: simpleFinScopeKey(ACCESS_URL, "conn-1"),
+    };
+
+    await expect(
+      provider.syncTransactions!(secret, { value: null }),
+    ).resolves.toMatchObject({
+      removedExternalIds: [],
+    });
+
+    const request = seen.find((url) => url.searchParams.has("start-date"));
+    expect(request).toBeDefined();
+    const start = Number(request!.searchParams.get("start-date"));
+    const end = Number(request!.searchParams.get("end-date"));
+    expect(end - start).toBeLessThanOrEqual(90 * 86_400);
+  });
+
+  it("clamps a stale SimpleFIN cursor so refreshes never exceed the 90-day limit", async () => {
+    const seen: URL[] = [];
+    const provider = createSimpleFinProvider({
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        seen.push(url);
+        return json(fixture());
+      },
+      now: () => new Date("2026-09-26T22:00:00Z"),
+    });
+    const secret: SimpleFinConnectionSecret = {
+      accessUrl: ACCESS_URL,
+      remoteConnectionId: "conn-1",
+      scopeKey: simpleFinScopeKey(ACCESS_URL, "conn-1"),
+    };
+
+    await provider.syncTransactions!(secret, { value: "sf1:1" });
+
+    const request = seen.find((url) => url.searchParams.has("start-date"));
+    expect(request).toBeDefined();
+    const start = Number(request!.searchParams.get("start-date"));
+    const end = Number(request!.searchParams.get("end-date"));
+    expect(end - start).toBeLessThanOrEqual(90 * 86_400);
+  });
+
   it("infers common account types and fails closed on unknown names", () => {
     expect(inferSimpleFinAccountType("Everyday Checking")).toBe("checking");
     expect(inferSimpleFinAccountType("High Yield Savings")).toBe("savings");
