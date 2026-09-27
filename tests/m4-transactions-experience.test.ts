@@ -33,4 +33,16 @@ describe("M4.2 Transactions experience", () => {
     expect(src).not.toContain('Exclude from budgets\n                      </label>');
   });
 
+  it("aligns the right-side transaction controls through a shared desktop grid", () => {
+    expect(src).toContain('md:grid-cols-[minmax(0,1fr)_max-content_max-content_max-content_2rem]');
+    expect(src).toContain('md:grid-cols-subgrid');
+    expect(src).toContain('md:col-start-4 md:row-start-1');
+    expect(src).toContain('tabular-nums');
+  });
+
+  it("uses the semantic danger palette when a transaction is excluded", () => {
+    expect(src).toContain('border-danger bg-[var(--danger-soft)] text-danger');
+    expect(src).toContain('border-danger bg-danger text-[var(--danger-foreground)]');
+  });
+
 });

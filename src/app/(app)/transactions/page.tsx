@@ -991,15 +991,21 @@ export default function TransactionsPage() {
             )}
           </div>
         ) : (
-          <div id="tx-list" className="divide-y divide-border">
+          <div
+            id="tx-list"
+            className="divide-y divide-border md:grid md:grid-cols-[minmax(0,1fr)_max-content_max-content_max-content_2rem] md:divide-y-0"
+          >
             {data.rows.map((t) => {
               const isExpense = t.amount_cents < 0;
               const expanded = expandedId === t.id;
               return (
-                <div key={t.id}>
+                <div
+                  key={t.id}
+                  className="md:col-span-5 md:grid md:grid-cols-subgrid md:border-b md:border-border md:last:border-b-0"
+                >
                   {/* Primary transaction row. Category + budget exclusion stay
                       visible so routine review never requires opening details. */}
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-3.5 transition-colors hover:bg-surface-muted/30 md:grid-cols-[minmax(0,1fr)_11rem_auto_auto] md:px-5 lg:grid-cols-[minmax(0,1fr)_12rem_auto_auto]">
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-3.5 transition-colors hover:bg-surface-muted/30 md:col-span-5 md:grid-cols-subgrid md:gap-x-4 md:px-5">
                     <button
                       type="button"
                       aria-expanded={expanded}
@@ -1026,10 +1032,10 @@ export default function TransactionsPage() {
                       </span>
                     </button>
 
-                    <div className="col-start-1 row-start-2 min-w-0 md:col-start-2 md:row-start-1">
+                    <div className="col-start-1 row-start-2 min-w-0 md:col-start-2 md:row-start-1 md:justify-self-end">
                       <CustomSelect
                         ariaLabel={`Category for ${t.name}`}
-                        className="w-full"
+                        className="w-full md:min-w-44"
                         value={t.user_category_id ?? ""}
                         onChange={(v) => setCategory.mutate({ id: t.id, categoryId: v || null })}
                         placeholder="Uncategorized"
@@ -1040,7 +1046,7 @@ export default function TransactionsPage() {
                     <label
                       className={`col-start-2 row-start-2 flex h-10 cursor-pointer select-none items-center justify-self-end gap-2 rounded-xl border px-3 text-xs font-medium transition-colors md:col-start-3 md:row-start-1 ${
                         t.exclude_from_budgets === 1
-                          ? "border-accent bg-accent/15 text-accent-text"
+                          ? "border-danger bg-[var(--danger-soft)] text-danger"
                           : "border-border bg-surface text-text-muted hover:text-text"
                       }`}
                     >
@@ -1048,7 +1054,7 @@ export default function TransactionsPage() {
                         aria-hidden="true"
                         className={`flex h-4 w-4 items-center justify-center rounded border ${
                           t.exclude_from_budgets === 1
-                            ? "border-accent bg-accent text-[var(--accent-foreground)]"
+                            ? "border-danger bg-danger text-[var(--danger-foreground)]"
                             : "border-border bg-surface"
                         }`}
                       >
@@ -1067,8 +1073,12 @@ export default function TransactionsPage() {
                       Exclude
                     </label>
 
-                    <div className="col-start-2 row-start-1 flex items-center justify-end gap-2 md:col-start-4 md:row-start-1">
-                      <span className={`money shrink-0 text-[15px] font-semibold ${isExpense ? "text-danger" : "text-success"}`}>
+                    <div className="col-start-2 row-start-1 flex items-center justify-end gap-2 md:contents">
+                      <span
+                        className={`money shrink-0 justify-self-end text-right text-[15px] font-semibold tabular-nums md:col-start-4 md:row-start-1 ${
+                          isExpense ? "text-danger" : "text-success"
+                        }`}
+                      >
                         <Money cents={t.amount_cents} signed />
                       </span>
                       <button
@@ -1076,7 +1086,7 @@ export default function TransactionsPage() {
                         aria-label={`${expanded ? "Hide" : "Show"} details for ${t.name}`}
                         aria-expanded={expanded}
                         onClick={() => setExpandedId(expanded ? null : t.id)}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-text md:col-start-5 md:row-start-1 md:justify-self-end"
                       >
                         <ChevronDown
                           size={16}
@@ -1089,7 +1099,7 @@ export default function TransactionsPage() {
 
                   {/* Secondary details / manual-row actions only. */}
                   {expanded && (
-                    <div className="flex flex-wrap items-center gap-3 border-t border-border bg-surface-muted/40 px-4 py-2.5 md:px-5">
+                    <div className="flex flex-wrap items-center gap-3 border-t border-border bg-surface-muted/40 px-4 py-2.5 md:col-span-5 md:px-5">
                       <span className="text-xs text-text-muted">Source: {t.source === "manual" ? "Manual" : t.source}</span>
                       <div className="flex-1" />
                       {t.source === "manual" && (
