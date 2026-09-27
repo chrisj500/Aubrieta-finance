@@ -32,10 +32,10 @@ describe("Escape-to-close on every modal surface", () => {
     assertWired("src/app/(app)/accounts/page.tsx", "accounts");
   });
 
-  it("wires all three transactions modals (add, import, import-history suggestion)", () => {
+  it("wires both transaction modals (add and edit)", () => {
     const src = read("src/app/(app)/transactions/page.tsx");
     const calls = (src.match(/useEscapeToClose\(/g) ?? []).length;
-    expect(calls).toBeGreaterThanOrEqual(3);
+    expect(calls).toBeGreaterThanOrEqual(2);
   });
 
   it("wires the plan add sheet + paydays sheet", () => {
@@ -44,10 +44,11 @@ describe("Escape-to-close on every modal surface", () => {
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
-  it("wires the settings add-category + plaid-help modals", () => {
-    const src = read("src/app/(app)/settings/page.tsx");
-    const calls = (src.match(/useEscapeToClose\(/g) ?? []).length;
-    expect(calls).toBeGreaterThanOrEqual(2);
+  it("wires Settings modal and Data & Sync Plaid help dismissal", () => {
+    const settings = read("src/app/(app)/settings/page.tsx");
+    const plaid = read("src/components/plaid-settings-card.tsx");
+    expect((settings.match(/useEscapeToClose\(/g) ?? []).length).toBeGreaterThanOrEqual(1);
+    expect((plaid.match(/useEscapeToClose\(/g) ?? []).length).toBeGreaterThanOrEqual(1);
   });
 
   it("wires the sidebar mobile 'More' sheet", () => {

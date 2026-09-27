@@ -29,6 +29,6 @@ describe("core empty states explain WHY + CTA + hint (Q11)", () => {
     const src = read("src/app/(app)/transactions/page.tsx");
     expect(src).toContain("No transactions yet");
     expect(src).toContain("Connect a bank"); // CTA
-    expect(src).toContain("import a CSV"); // hint
+    expect(src).toContain("Data & Sync"); // hint / recovery destination
   });
 });

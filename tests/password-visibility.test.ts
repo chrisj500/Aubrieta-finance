@@ -35,12 +35,13 @@ describe("password visibility toggle", () => {
     expect(src).toMatch(/<Input type="password" inputMode="numeric" value=\{importPin\}/);
   });
 
-  it("settings passwords + Plaid secret use PasswordInput; PIN fields stay masked", () => {
+  it("settings passwords and Data & Sync Plaid secret use PasswordInput; PIN fields stay masked", () => {
     const src = read("src/app/(app)/settings/page.tsx");
+    const plaid = read("src/components/plaid-settings-card.tsx");
     expect(src).toContain('import { PasswordInput } from "@/components/ui/password-input"');
     expect(src).toMatch(/<PasswordInput aria-label=\{"Current password"\}/);
     expect(src).toMatch(/<PasswordInput aria-label=\{"New password"\}/);
-    expect(src).toMatch(/<PasswordInput aria-label=\{"Plaid secret"\}/);
+    expect(plaid).toMatch(/<PasswordInput aria-label="Plaid secret"/);
     expect(src).toMatch(/<PasswordInput aria-label=\{"Account password"\}/);
     // PIN pads (New PIN, Unlock PIN, Phone device PIN) stay masked
     expect(src).toMatch(/aria-label=\{"New PIN"\}[\s\S]{0,60}type="password"/);
