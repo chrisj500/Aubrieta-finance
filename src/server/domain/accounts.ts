@@ -4,6 +4,8 @@ import { assertValidCents } from "@/server/domain/money";
 import { getDb, type Db } from "@/server/db/registry";
 import { accountReadScope, assertAccountManageable, getHouseholdContext } from "@/server/authz/household-access";
 import { nextDueDateForDay } from "@/server/domain/account-liability-overrides";
+import { createInstitutionNormalizer, resolveCardIdentities } from "@/server/domain/account-identity";
+import type { CardIdentity } from "@/lib/card-identity";
 
 export interface AccountRow {
   id: string;
@@ -25,6 +27,8 @@ export interface AccountRow {
   available_balance_cents: number | null;
   currency: string;
   institution_name: string | null;
+  institution_raw_name?: string | null;
+  card_identity?: CardIdentity | null;
   is_demo: number;
   include_in_net_worth: number;
   hidden: number;
@@ -47,6 +51,16 @@ function now(): string {
 
 const ACCOUNT_TYPES = ["depository", "credit", "investment", "loan", "other"] as const;
 
+async function enrichAccountIdentity(db: Db, userId: string, rows: AccountRow[]): Promise<AccountRow[]> {
+  const normalizeInstitution = await createInstitutionNormalizer(db, userId);
+  const normalized = rows.map((row) => ({
+    ...row,
+    institution_name: normalizeInstitution(row.institution_raw_name ?? row.institution_name),
+  }));
+  const identities = await resolveCardIdentities(db, userId, normalized);
+  return normalized.map((row) => ({ ...row, card_identity: identities.get(row.id) ?? null }));
+}
+
 export function createAccountsService(db: Db = getDb()) {
   return {
     async list(userId: string): Promise<AccountRow[]> {
@@ -61,7 +75,7 @@ export function createAccountsService(db: Db = getDb()) {
               WHERE apr.account_id = a.id
               ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
               LIMIT 1)
-          ) AS institution_name,
+          ) AS institution_raw_name,
           u.is_demo,
           owner.display_name AS owner_display_name,
           COALESCE((SELECT SUM(t.amount_cents) FROM transactions t WHERE t.account_id = a.id AND t.pending = 1 AND t.exclude_from_budgets = 0 AND t.is_transfer = 0), 0) AS pending_balance_cents,
@@ -77,14 +91,14 @@ export function createAccountsService(db: Db = getDb()) {
         userId,
         ...scope.params,
       );
-      return rows.map((a) => ({
+      return enrichAccountIdentity(db, userId, rows.map((a) => ({
         ...a,
         is_owner: (a.owner_user_id ?? a.user_id) === userId,
         balance_with_pending_cents:
           (a.current_balance_cents ?? 0) + (a.pending_balance_cents ?? 0),
         next_payment_due_date:
           a.manual_due_day != null ? nextDueDateForDay(a.manual_due_day) : a.next_payment_due_date ?? null,
-      }));
+      })));
     },
 
     /** Removed accounts (soft-deleted) so the user can restore them. */
@@ -99,7 +113,7 @@ export function createAccountsService(db: Db = getDb()) {
               WHERE apr.account_id = a.id
               ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
               LIMIT 1)
-          ) AS institution_name,
+          ) AS institution_raw_name,
           u.is_demo,
           u.display_name AS owner_display_name
            FROM accounts a
@@ -109,7 +123,7 @@ export function createAccountsService(db: Db = getDb()) {
           ORDER BY a.deleted_at DESC`,
         userId,
       );
-      return rows.map((a) => ({ ...a, is_owner: true }));
+      return enrichAccountIdentity(db, userId, rows.map((a) => ({ ...a, is_owner: true })));
     },
 
     /**
@@ -137,7 +151,7 @@ export function createAccountsService(db: Db = getDb()) {
           params.push(...accountIds);
         }
       }
-      return db.all<AccountRow>(
+      const rows = await db.all<AccountRow>(
         `SELECT a.*,
           COALESCE(
             i.institution_name,
@@ -147,7 +161,7 @@ export function createAccountsService(db: Db = getDb()) {
               WHERE apr.account_id = a.id
               ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
               LIMIT 1)
-          ) AS institution_name,
+          ) AS institution_raw_name,
           u.is_demo
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
@@ -156,6 +170,7 @@ export function createAccountsService(db: Db = getDb()) {
           ORDER BY a.type, a.name COLLATE NOCASE`,
         ...params
       );
+      return enrichAccountIdentity(db, userId, rows);
     },
 
     async get(userId: string, id: string): Promise<AccountRow> {
@@ -170,7 +185,7 @@ export function createAccountsService(db: Db = getDb()) {
               WHERE apr.account_id = a.id
               ORDER BY CASE apr.provider WHEN 'plaid' THEN 0 WHEN 'teller' THEN 1 ELSE 2 END
               LIMIT 1)
-          ) AS institution_name,
+          ) AS institution_raw_name,
           u.is_demo,
           owner.display_name AS owner_display_name
            FROM accounts a
@@ -182,7 +197,8 @@ export function createAccountsService(db: Db = getDb()) {
         ...scope.params,
       );
       if (!row) throw apiErrors.notFound("Account");
-      return { ...row, is_owner: (row.owner_user_id ?? row.user_id) === userId };
+      const [enriched] = await enrichAccountIdentity(db, userId, [{ ...row, is_owner: (row.owner_user_id ?? row.user_id) === userId }]);
+      return enriched;
     },
 
     /** Manual account — no Plaid item, fully user-owned. */

@@ -176,3 +176,27 @@ describe("account list enrichments and bulk management", () => {
     expect(rows.every((row) => row.include_in_net_worth === 0)).toBe(true);
   });
 });
+
+
+describe("account identity enrichment", () => {
+  it("returns canonical institution names and server-resolved card identity", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "account-identity-enrichment");
+    const id = await seedManualAccount(db, user.id, "Chase Sapphire Preferred (7781)", "credit");
+    const now = new Date().toISOString();
+    await db.run(
+      `INSERT INTO provider_connections (id,user_id,provider,external_connection_id,institution_name,status,capabilities_json,created_at,updated_at)
+       VALUES ('conn-enrich',?,'simplefin','conn-enrich','JPMorgan Chase Bank, N.A.','active','[]',?,?)`,
+      user.id, now, now,
+    );
+    await db.run(
+      `INSERT INTO account_provider_refs (id,user_id,account_id,connection_id,provider,external_account_id,created_at,updated_at)
+       VALUES ('ref-enrich',?,?,'conn-enrich','simplefin','acct-enrich',?,?)`,
+      user.id, id, now, now,
+    );
+    const [account] = await createAccountsService(db).list(user.id);
+    expect(account.institution_raw_name).toBe('JPMorgan Chase Bank, N.A.');
+    expect(account.institution_name).toBe('Chase Bank');
+    expect(account.card_identity).toMatchObject({ product: 'Sapphire Preferred', confidence: 'exact', source: 'predicted' });
+  });
+});
