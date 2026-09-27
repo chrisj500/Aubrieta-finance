@@ -344,6 +344,7 @@ function mapTransaction(
   txn: SimpleFinTransaction,
   secret: SimpleFinConnectionSecret,
   now: Date,
+  resolvedAccountType?: NormalizedAccountType,
 ): ProviderTransaction | null {
   const amount = parseMoney(txn.amount);
   if (amount == null) return null;
@@ -363,7 +364,7 @@ function mapTransaction(
     if (!/^\d{1,4}$/.test(raw)) return null;
     return raw.padStart(4, "0");
   })();
-  const accountType = inferSimpleFinAccountType(
+  const accountType = resolvedAccountType ?? inferSimpleFinAccountType(
     account.name?.trim() || account.id,
     account.extra,
     account.balance,
@@ -636,9 +637,12 @@ export function createSimpleFinProvider(options: SimpleFinProviderOptions = {}):
       });
       checkErrors(set, secret.remoteConnectionId);
       const added: ProviderTransaction[] = [];
-      for (const account of relevantAccounts(set, secret.remoteConnectionId)) {
+      const relevant = relevantAccounts(set, secret.remoteConnectionId);
+      const resolvedTypes = inferConnectionAccountTypes(relevant);
+      for (let accountIndex = 0; accountIndex < relevant.length; accountIndex++) {
+        const account = relevant[accountIndex];
         for (const txn of account.transactions ?? []) {
-          const mapped = mapTransaction(account, txn, secret, nowDate);
+          const mapped = mapTransaction(account, txn, secret, nowDate, resolvedTypes[accountIndex]);
           if (mapped) added.push(mapped);
         }
       }
