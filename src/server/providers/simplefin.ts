@@ -9,7 +9,8 @@ import type {
 } from "./types";
 
 const DAY_SECONDS = 86_400;
-const DEFAULT_LOOKBACK_DAYS = 730;
+const MAX_REQUEST_DAYS = 90;
+const DEFAULT_LOOKBACK_DAYS = MAX_REQUEST_DAYS;
 const DEFAULT_OVERLAP_DAYS = 5;
 const CURSOR_PREFIX = "sf1:";
 
@@ -335,9 +336,15 @@ function relevantAccounts(set: SimpleFinAccountSet, remoteConnectionId: string):
   return set.accounts.filter((account) => remoteConnectionIdFor(account) === remoteConnectionId);
 }
 
+function isNonFatalLegacyWarning(message: string): boolean {
+  return /requested date range exceeds limit of 90 days and was capped/i.test(message);
+}
+
 function checkErrors(set: SimpleFinAccountSet, remoteConnectionId?: string): void {
   const structured = (set.errlist ?? []).filter((e) => !e.conn_id || !remoteConnectionId || e.conn_id === remoteConnectionId);
-  const legacy = (set.errors ?? []).map((msg) => ({ code: "gen.", msg }));
+  const legacy = (set.errors ?? [])
+    .filter((msg) => !isNonFatalLegacyWarning(msg))
+    .map((msg) => ({ code: "gen.", msg }));
   const errors = [...structured, ...legacy];
   if (errors.length === 0) return;
 
@@ -521,9 +528,6 @@ export function createSimpleFinProvider(options: SimpleFinProviderOptions = {}):
         cursor.value?.startsWith(CURSOR_PREFIX)
           ? Number.parseInt(cursor.value.slice(CURSOR_PREFIX.length), 10)
           : NaN;
-      const startDate = Number.isFinite(parsedCursor)
-        ? parsedCursor
-        : nowSeconds - initialLookbackDays * DAY_SECONDS;
       // end-date is exclusive in SimpleFIN. Give today's pending/posted rows a
       // full UTC-day boundary rather than accidentally clipping late entries.
       const endDate = Math.floor(
@@ -533,6 +537,17 @@ export function createSimpleFinProvider(options: SimpleFinProviderOptions = {}):
           nowDate.getUTCDate() + 1,
         ) / 1000,
       );
+      // SimpleFIN limits every /accounts transaction window to 90 days. Clamp
+      // both first syncs and stale cursors so Aubrieta never asks the Bridge
+      // for an oversized range.
+      const maxWindowStart = Math.max(0, endDate - MAX_REQUEST_DAYS * DAY_SECONDS);
+      const initialWindowDays = Math.min(
+        MAX_REQUEST_DAYS,
+        Math.max(1, initialLookbackDays),
+      );
+      const startDate = Number.isFinite(parsedCursor)
+        ? Math.max(parsedCursor, maxWindowStart)
+        : Math.max(0, endDate - initialWindowDays * DAY_SECONDS);
       const set = await fetchAccountSet(secret.accessUrl, {
         startDate,
         endDate,
