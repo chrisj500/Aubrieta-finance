@@ -9,7 +9,7 @@ import Link from "next/link";
 import NextImage from "next/image";
 import {
   CreditCard, Landmark, PiggyBank, TrendingUp, Wallet, CircleHelp, X, ChevronDown,
-  RotateCcw, ALargeSmall, DollarSign, CalendarClock, ArrowUp, ArrowDown, Check, Trash2, Pencil, ImageUp,
+  RotateCcw, ALargeSmall, DollarSign, CalendarClock, ArrowUp, ArrowDown, Check, Trash2, Pencil,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { accountDetailHref } from "@/lib/account-detail-href";
@@ -181,9 +181,15 @@ export default function AccountsPage() {
   const [bulkType, setBulkType] = useState("");
   const [bulkVisibility, setBulkVisibility] = useState("");
   const [bulkNetWorth, setBulkNetWorth] = useState("");
-  const [editingAccount, setEditingAccount] = useState<{ id: string; name: string; description: string } | null>(null);
+  const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editDueDay, setEditDueDay] = useState("");
+  const [editArtworkPreview, setEditArtworkPreview] = useState<string | null>(null);
+  const [editArtworkInitial, setEditArtworkInitial] = useState<string | null>(null);
+  const [editArtworkError, setEditArtworkError] = useState<string | null>(null);
+  const [editArtworkPreparing, setEditArtworkPreparing] = useState(false);
+  const [editAccountError, setEditAccountError] = useState<string | null>(null);
   const [editingCardIdentity, setEditingCardIdentity] = useState<Account | null>(null);
   const [identityChoice, setIdentityChoice] = useState("");
   const [identityIssuer, setIdentityIssuer] = useState("");
@@ -193,13 +199,9 @@ export default function AccountsPage() {
   const [institutionIconPreview, setInstitutionIconPreview] = useState<string | null>(null);
   const [institutionIconError, setInstitutionIconError] = useState<string | null>(null);
   const [institutionIconPreparing, setInstitutionIconPreparing] = useState(false);
-  const [editingAccountArtwork, setEditingAccountArtwork] = useState<Account | null>(null);
-  const [accountArtworkPreview, setAccountArtworkPreview] = useState<string | null>(null);
-  const [accountArtworkError, setAccountArtworkError] = useState<string | null>(null);
-  const [accountArtworkPreparing, setAccountArtworkPreparing] = useState(false);
-  useEscapeToClose(() => { if (!updateAccountMeta.isPending) setEditingAccount(null); }, editingAccount !== null);
+  useEscapeToClose(() => { if (!updateAccountMeta.isPending && !editArtworkPreparing) setEditingAccount(null); }, editingAccount !== null);
   const editDialogA11yRef = useDialogA11y(editingAccount !== null, () => {
-    if (!updateAccountMeta.isPending) setEditingAccount(null);
+    if (!updateAccountMeta.isPending && !editArtworkPreparing) setEditingAccount(null);
   });
   useEscapeToClose(() => { if (!updateCardIdentity.isPending && !resetCardIdentity.isPending) setEditingCardIdentity(null); }, editingCardIdentity !== null);
   const identityDialogA11yRef = useDialogA11y(editingCardIdentity !== null, () => {
@@ -211,12 +213,7 @@ export default function AccountsPage() {
   const institutionIconDialogA11yRef = useDialogA11y(editingInstitutionIcon !== null, () => {
     if (!saveInstitutionIcon.isPending && !removeInstitutionIcon.isPending && !institutionIconPreparing) setEditingInstitutionIcon(null);
   });
-  useEscapeToClose(() => {
-    if (!saveAccountArtwork.isPending && !removeAccountArtwork.isPending && !accountArtworkPreparing) setEditingAccountArtwork(null);
-  }, editingAccountArtwork !== null);
-  const accountArtworkDialogA11yRef = useDialogA11y(editingAccountArtwork !== null, () => {
-    if (!saveAccountArtwork.isPending && !removeAccountArtwork.isPending && !accountArtworkPreparing) setEditingAccountArtwork(null);
-  });
+
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["accounts"] });
@@ -266,16 +263,38 @@ export default function AccountsPage() {
   });
 
   const updateAccountMeta = useMutation({
-    mutationFn: async ({ id, name, description }: { id: string; name: string; description: string }) => {
-      await api.patch(`/api/accounts/${id}`, { name });
-      await api.patch(`/api/accounts/${id}`, { description: description.trim() || null });
+    mutationFn: async () => {
+      if (!editingAccount) throw new Error("No account selected.");
+      const dueText = editDueDay.trim();
+      const dueDay = dueText === "" ? null : Number(dueText);
+      if (dueDay !== null && (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31)) {
+        throw new Error("Due day must be a whole number from 1 to 31.");
+      }
+      await api.patch(`/api/accounts/${editingAccount.id}`, { name: editName.trim() });
+      await api.patch(`/api/accounts/${editingAccount.id}`, { description: editDescription.trim() || null });
+      if (isLiability(editingAccount)) {
+        await api.patch(`/api/accounts/${editingAccount.id}/liability`, { dueDay });
+      }
+      if (editArtworkPreview !== editArtworkInitial) {
+        if (editArtworkPreview) {
+          await api.put<{ icon: AccountIcon }>("/api/account-icons", {
+            accountId: editingAccount.id,
+            dataUrl: editArtworkPreview,
+          });
+        } else if (editArtworkInitial) {
+          await api.del(`/api/account-icons?accountId=${encodeURIComponent(editingAccount.id)}`);
+        }
+      }
     },
     onSuccess: () => {
       setActionError(null);
+      setEditAccountError(null);
+      setEditArtworkError(null);
       setEditingAccount(null);
       invalidate();
+      qc.invalidateQueries({ queryKey: ["account-icons"] });
     },
-    onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to update account details."),
+    onError: (e) => setEditAccountError(e instanceof Error ? e.message : "Failed to update account details."),
   });
 
   const updateCardIdentity = useMutation({
@@ -345,37 +364,6 @@ export default function AccountsPage() {
     onError: (e) => setInstitutionIconError(e instanceof Error ? e.message : "Failed to remove institution icon."),
   });
 
-  const saveAccountArtwork = useMutation({
-    mutationFn: async () => {
-      if (!editingAccountArtwork || !accountArtworkPreview) throw new Error("Choose artwork first.");
-      return api.put<{ icon: AccountIcon }>("/api/account-icons", {
-        accountId: editingAccountArtwork.id,
-        dataUrl: accountArtworkPreview,
-      });
-    },
-    onSuccess: () => {
-      setActionError(null);
-      setAccountArtworkError(null);
-      setEditingAccountArtwork(null);
-      qc.invalidateQueries({ queryKey: ["account-icons"] });
-    },
-    onError: (e) => setAccountArtworkError(e instanceof Error ? e.message : "Failed to save account artwork."),
-  });
-
-  const removeAccountArtwork = useMutation({
-    mutationFn: async () => {
-      if (!editingAccountArtwork) throw new Error("No account selected.");
-      return api.del(`/api/account-icons?accountId=${encodeURIComponent(editingAccountArtwork.id)}`);
-    },
-    onSuccess: () => {
-      setActionError(null);
-      setAccountArtworkError(null);
-      setEditingAccountArtwork(null);
-      qc.invalidateQueries({ queryKey: ["account-icons"] });
-    },
-    onError: (e) => setAccountArtworkError(e instanceof Error ? e.message : "Failed to remove account artwork."),
-  });
-
   const bulkUpdate = useMutation({
     mutationFn: () =>
       api.patch<{ updated: number }>("/api/accounts/bulk", {
@@ -421,10 +409,16 @@ export default function AccountsPage() {
     setInstitutionIconError(null);
   }
 
-  function openAccountArtworkEditor(account: Account) {
-    setEditingAccountArtwork(account);
-    setAccountArtworkPreview(accountIconMap.get(account.id)?.dataUrl ?? null);
-    setAccountArtworkError(null);
+  function openAccountEditor(account: Account) {
+    const artwork = accountIconMap.get(account.id)?.dataUrl ?? null;
+    setEditingAccount(account);
+    setEditName(account.name);
+    setEditDescription(account.description ?? "");
+    setEditDueDay(account.manual_due_day != null ? String(account.manual_due_day) : "");
+    setEditArtworkPreview(artwork);
+    setEditArtworkInitial(artwork);
+    setEditArtworkError(null);
+    setEditAccountError(null);
   }
 
   const visibleAccounts = useMemo(() => {
@@ -482,7 +476,7 @@ export default function AccountsPage() {
   const deletedAccounts = deleted.data?.accounts ?? [];
 
   return (
-    <div className="min-w-0 space-y-6 overflow-x-hidden">
+    <div className="min-w-0 space-y-6 overflow-x-clip">
       {actionError && (
         <p role="alert" className="rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-sm text-danger">
           {actionError}
@@ -522,7 +516,7 @@ export default function AccountsPage() {
           Include pending
         </button>
       </div>
-      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="sticky top-2 z-20 flex flex-col gap-3 rounded-2xl border border-border bg-surface p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-wrap gap-1.5" aria-label="Filter accounts by type">
           {FILTERS.map((filter) => {
             const count = filter.value === "all"
@@ -744,7 +738,20 @@ export default function AccountsPage() {
                             </div>
 
                             <div className="min-w-0">
-                              <Link href={accountDetailHref(account.id)} className="block truncate text-sm font-semibold text-text hover:text-accent-text">{account.name}</Link>
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                <Link href={accountDetailHref(account.id)} className="block min-w-0 truncate text-sm font-semibold text-text hover:text-accent-text">{account.name}</Link>
+                                {account.is_owner && (
+                                  <button
+                                    type="button"
+                                    aria-label={`Edit ${account.name}`}
+                                    title="Edit account"
+                                    onClick={() => openAccountEditor(account)}
+                                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-accent-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                                  >
+                                    <Pencil size={13} aria-hidden />
+                                  </button>
+                                )}
+                              </div>
                               <p className="mt-0.5 truncate text-xs text-text-muted">
                                 {TYPE_LABELS[account.type ?? "other"]}{account.mask ? ` · ••••${account.mask}` : ""}{!account.is_owner && account.owner_display_name ? ` · Owned by ${account.owner_display_name}` : ""}
                               </p>
@@ -767,32 +774,6 @@ export default function AccountsPage() {
                             </div>
 
                             <div className="flex items-center justify-end gap-1">
-                              {account.is_owner && (
-                                <button
-                                  type="button"
-                                  aria-label={`Edit artwork for ${account.name}`}
-                                  title="Change account artwork"
-                                  onClick={() => openAccountArtworkEditor(account)}
-                                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-accent-text"
-                                >
-                                  <ImageUp size={13} aria-hidden />
-                                </button>
-                              )}
-                              {account.is_owner && (
-                                <button
-                                  type="button"
-                                  aria-label={`Edit ${account.name}`}
-                                  title="Edit name or note"
-                                  onClick={() => {
-                                    setEditingAccount({ id: account.id, name: account.name, description: account.description ?? "" });
-                                    setEditName(account.name);
-                                    setEditDescription(account.description ?? "");
-                                  }}
-                                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
-                                >
-                                  <Pencil size={13} aria-hidden />
-                                </button>
-                              )}
                               {account.is_owner && (
                                 <button
                                   type="button"
@@ -908,58 +889,7 @@ export default function AccountsPage() {
         </div>
       )}
 
-      {editingAccountArtwork && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-          onClick={() => !saveAccountArtwork.isPending && !removeAccountArtwork.isPending && !accountArtworkPreparing && setEditingAccountArtwork(null)}
-        >
-          <div
-            ref={accountArtworkDialogA11yRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Edit artwork for ${editingAccountArtwork.name}`}
-            onClick={(event) => event.stopPropagation()}
-            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-2xl"
-          >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <CardTitle>Account artwork</CardTitle>
-                <p className="mt-1 text-xs text-text-muted">{editingAccountArtwork.name}</p>
-              </div>
-              <button aria-label="Close account artwork editor" onClick={() => !saveAccountArtwork.isPending && !removeAccountArtwork.isPending && !accountArtworkPreparing && setEditingAccountArtwork(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-muted hover:text-text"><X size={17} /></button>
-            </div>
 
-            <IconUploadDropzone
-              preview={accountArtworkPreview}
-              shape="card"
-              fallback={<CreditCard size={34} aria-hidden />}
-              disabled={saveAccountArtwork.isPending || removeAccountArtwork.isPending}
-              onPrepared={setAccountArtworkPreview}
-              onError={setAccountArtworkError}
-              onPreparingChange={setAccountArtworkPreparing}
-            />
-            <p className="mt-2 text-xs text-text-muted">Card artwork is stored separately from card identity, so replacing the image does not change provider or product metadata.</p>
-
-            {accountArtworkError && <p role="alert" className="mt-3 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-xs text-danger">{accountArtworkError}</p>}
-
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                {accountIconMap.has(editingAccountArtwork.id) && (
-                  <Button type="button" variant="secondary" size="sm" disabled={removeAccountArtwork.isPending || saveAccountArtwork.isPending || accountArtworkPreparing} onClick={() => removeAccountArtwork.mutate()}>
-                    {removeAccountArtwork.isPending ? "Removing…" : "Use default artwork"}
-                  </Button>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button type="button" variant="secondary" disabled={saveAccountArtwork.isPending || removeAccountArtwork.isPending || accountArtworkPreparing} onClick={() => setEditingAccountArtwork(null)}>Cancel</Button>
-                <Button type="button" disabled={!accountArtworkPreview || saveAccountArtwork.isPending || removeAccountArtwork.isPending || accountArtworkPreparing} onClick={() => saveAccountArtwork.mutate()}>
-                  {saveAccountArtwork.isPending ? "Saving…" : "Save artwork"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {editingCardIdentity && editingCardIdentity.card_identity && (
         <div
@@ -1059,39 +989,102 @@ export default function AccountsPage() {
       {editingAccount && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-          onClick={() => !updateAccountMeta.isPending && setEditingAccount(null)}
+          onClick={() => !updateAccountMeta.isPending && !editArtworkPreparing && setEditingAccount(null)}
         >
           <div
             ref={editDialogA11yRef}
             role="dialog"
             aria-modal="true"
             aria-label={`Edit ${editingAccount.name}`}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-5 shadow-2xl"
           >
             <div className="mb-4 flex items-center justify-between gap-3">
-              <CardTitle>Edit account</CardTitle>
-              <button aria-label="Close account editor" onClick={() => !updateAccountMeta.isPending && setEditingAccount(null)} className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface-muted hover:text-text"><X size={17} /></button>
+              <div>
+                <CardTitle>Edit account</CardTitle>
+                <p className="mt-1 text-xs text-text-muted">Rename the account, customize its artwork, or set a recurring due day.</p>
+              </div>
+              <button aria-label="Close account editor" onClick={() => !updateAccountMeta.isPending && !editArtworkPreparing && setEditingAccount(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-muted hover:text-text"><X size={17} /></button>
             </div>
+
             <form
-              className="space-y-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!editName.trim()) return;
-                updateAccountMeta.mutate({ id: editingAccount.id, name: editName.trim(), description: editDescription });
+              className="space-y-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!editName.trim() || editArtworkPreparing) return;
+                updateAccountMeta.mutate();
               }}
             >
               <div>
                 <label htmlFor="edit-account-name" className="mb-1 block text-xs font-medium text-text-muted">Name</label>
-                <Input id="edit-account-name" value={editName} onChange={(e) => setEditName(e.target.value)} maxLength={100} required autoFocus />
+                <Input id="edit-account-name" value={editName} onChange={(event) => setEditName(event.target.value)} maxLength={100} required autoFocus />
               </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-medium text-text-muted">Artwork</p>
+                    <p className="mt-0.5 text-[11px] text-text-muted">Optional. Custom artwork overrides Aubrieta&apos;s generated account/card image.</p>
+                  </div>
+                  {editArtworkPreview && (
+                    <button
+                      type="button"
+                      onClick={() => { setEditArtworkPreview(null); setEditArtworkError(null); }}
+                      disabled={updateAccountMeta.isPending || editArtworkPreparing}
+                      className="shrink-0 text-xs font-medium text-text-muted hover:text-accent-text disabled:opacity-50"
+                    >
+                      Use default artwork
+                    </button>
+                  )}
+                </div>
+                <IconUploadDropzone
+                  preview={editArtworkPreview}
+                  shape={editingAccount.type === "credit" ? "card" : "square"}
+                  fallback={editingAccount.type === "credit" && editingAccount.card_identity
+                    ? <AccountBrandTile identity={editingAccount.card_identity} mask={editingAccount.mask} />
+                    : <CreditCard size={32} aria-hidden />}
+                  disabled={updateAccountMeta.isPending}
+                  onPrepared={setEditArtworkPreview}
+                  onError={setEditArtworkError}
+                  onPreparingChange={setEditArtworkPreparing}
+                />
+                {editArtworkError && <p role="alert" className="mt-2 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-xs text-danger">{editArtworkError}</p>}
+              </div>
+
+              {isLiability(editingAccount) && (
+                <div>
+                  <label htmlFor="edit-account-due-day" className="mb-1 block text-xs font-medium text-text-muted">Due day of month</label>
+                  <Input
+                    id="edit-account-due-day"
+                    type="number"
+                    min={1}
+                    max={31}
+                    inputMode="numeric"
+                    placeholder="e.g. 15"
+                    value={editDueDay}
+                    onChange={(event) => setEditDueDay(event.target.value)}
+                  />
+                  <p className="mt-1 text-[11px] text-text-muted">
+                    Leave blank to use provider data when available. This is a recurring monthly override, not a one-time date.
+                  </p>
+                  {editingAccount.manual_due_day == null && editingAccount.next_payment_due_date && (
+                    <p className="mt-1 text-[11px] text-accent-text">
+                      Provider currently reports next due {new Date(`${editingAccount.next_payment_due_date}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label htmlFor="edit-account-note" className="mb-1 block text-xs font-medium text-text-muted">Note</label>
-                <Input id="edit-account-note" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} maxLength={300} placeholder="Optional note about this account" />
+                <Input id="edit-account-note" value={editDescription} onChange={(event) => setEditDescription(event.target.value)} maxLength={300} placeholder="Optional note about this account" />
               </div>
+
+              {editAccountError && <p role="alert" className="rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-xs text-danger">{editAccountError}</p>}
+
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="secondary" disabled={updateAccountMeta.isPending} onClick={() => setEditingAccount(null)}>Cancel</Button>
-                <Button type="submit" disabled={updateAccountMeta.isPending || !editName.trim()}>{updateAccountMeta.isPending ? "Saving…" : "Save"}</Button>
+                <Button type="button" variant="secondary" disabled={updateAccountMeta.isPending || editArtworkPreparing} onClick={() => setEditingAccount(null)}>Cancel</Button>
+                <Button type="submit" disabled={updateAccountMeta.isPending || editArtworkPreparing || !editName.trim()}>{updateAccountMeta.isPending ? "Saving…" : editArtworkPreparing ? "Preparing image…" : "Save changes"}</Button>
               </div>
             </form>
           </div>
