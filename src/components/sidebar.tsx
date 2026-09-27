@@ -9,6 +9,7 @@ import {
   ArrowLeftRight,
   Bot,
   CalendarClock,
+  Database,
   Landmark,
   LayoutDashboard,
   LogOut,
@@ -34,6 +35,7 @@ const NAV = [
   { href: "/plan", label: "Plan", Icon: CalendarClock },
   { href: "/reports", label: "Reports", Icon: PieChart },
   { href: "/agents", label: "Agents", Icon: Bot },
+  { href: "/data-sync", label: "Data & Sync", Icon: Database },
   { href: "/settings", label: "Settings", Icon: Settings },
 ];
 
@@ -50,6 +52,7 @@ const MORE_ITEMS = [
   { href: "/plan", label: "Plan", Icon: CalendarClock, blurb: "Bills, debts & goals" },
   { href: "/reports", label: "Reports", Icon: PieChart, blurb: "Trends & projections" },
   { href: "/agents", label: "Agents", Icon: Bot, blurb: "Connect your AI" },
+  { href: "/data-sync", label: "Data & Sync", Icon: Database, blurb: "Connections, health & imports" },
   { href: "/settings", label: "Settings", Icon: Settings, blurb: "Everything else" },
 ] as const;
 

@@ -14,7 +14,7 @@ function when(value: string | null): string {
 }
 
 function providerAnchor(provider: string): string | null {
-  return provider === "plaid" || provider === "teller" || provider === "simplefin" || provider === "akoya"
+  return provider === "plaid" || provider === "simplefin" || provider === "akoya"
     ? `#provider-${provider}`
     : null;
 }
@@ -119,7 +119,7 @@ export function ConnectionHealthCard({
           <p className="mt-1 text-sm text-text-muted">
             {summary.manualAccountCount > 0
               ? `${summary.manualAccountCount} manual account${summary.manualAccountCount === 1 ? " is" : "s are"} working without a data provider. Connect a provider below whenever you want automatic updates.`
-              : "Connect Plaid, Teller, SimpleFIN, or Akoya below when you want automatic account updates."}
+              : "Connect Plaid, SimpleFIN, or Akoya below when you want automatic account updates."}
           </p>
         </div>
       ) : (

@@ -14,6 +14,7 @@ const paths = {
   transactions: "src/app/(app)/transactions/page.tsx",
   plan: "src/app/(app)/plan/page.tsx",
   settings: "src/app/(app)/settings/page.tsx",
+  plaid: "src/components/plaid-settings-card.tsx",
 } as const;
 
 function dialogFragment(src: string, title: string): string {
@@ -81,13 +82,14 @@ describe("confirm dialog stays open through the request", () => {
     expect(src).toContain('api.post("/api/planning/goals", {');
   });
 
-  it("settings: logout-all and remove-item close only on success", () => {
-    const src = readFileSync(path.resolve(__dirname, "../", paths.settings), "utf8");
-    const logout = onConfirmBody(dialogFragment(src, "Sign out everywhere?"));
+  it("settings logout-all and Data & Sync bank removal close only on success", () => {
+    const settings = readFileSync(path.resolve(__dirname, "../", paths.settings), "utf8");
+    const plaid = readFileSync(path.resolve(__dirname, "../", paths.plaid), "utf8");
+    const logout = onConfirmBody(dialogFragment(settings, "Sign out everywhere?"));
     expect(logout).not.toContain("setConfirmLogoutAll(false)");
-    expect(src).toMatch(/onSuccess: \(\) => \{\s*setConfirmLogoutAll\(false\);\s*window\.location\.href = "\/login";/);
-    const rm = onConfirmBody(dialogFragment(src, "Remove this bank connection?"));
+    expect(settings).toMatch(/onSuccess: \(\) => \{\s*setConfirmLogoutAll\(false\);\s*window\.location\.href = "\/login";/);
+    const rm = onConfirmBody(dialogFragment(plaid, "Remove this bank connection?"));
     expect(rm).not.toContain("setConfirmRemoveItem(null)");
-    expect(src).toMatch(/onSuccess: \(\) => \{\s*setConfirmRemoveItem\(null\);/);
+    expect(plaid).toMatch(/onSuccess: \(\) => \{\s*setConfirmRemoveItem\(null\);/);
   });
 });

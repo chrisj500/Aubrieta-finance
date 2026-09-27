@@ -64,10 +64,10 @@ describe("Dialog focus-trap wired on every modal surface", () => {
   it("wires the accounts manual-account modal", () => {
     assertWired("src/app/(app)/accounts/page.tsx");
   });
-  it("wires all three transactions modals (add, import, import-history suggestion)", () => {
+  it("wires both transaction modals (add and edit)", () => {
     const src = read("src/app/(app)/transactions/page.tsx");
     const calls = (src.match(/useDialogA11y\(/g) ?? []).length;
-    expect(calls).toBeGreaterThanOrEqual(3);
+    expect(calls).toBeGreaterThanOrEqual(2);
   });
   it("wires the plan add-sheet modal", () => {
     assertWired("src/app/(app)/plan/page.tsx");

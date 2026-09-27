@@ -5,7 +5,7 @@ import { useEscapeToClose } from "@/lib/use-escape-to-close";
 import { useDialogA11y } from "@/lib/use-dialog-a11y";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import jsQR from "jsqr";
-import { Moon, Sun, ExternalLink, QrCode, X } from "lucide-react";
+import { Moon, Sun, QrCode, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { hasWindow } from "@/lib/browser-env";
 import { usePageTitle } from "@/lib/use-page-title";
@@ -22,11 +22,6 @@ import { useTheme } from "@/components/providers";
 import { isSoloCandidate } from "@/lib/mobile-mode";
 import { storeHubUrl } from "@/lib/mobile-storage";
 import { UpdatesCard } from "@/components/updates-card";
-import { PlaidLinkLauncher } from "@/components/plaid-link-launcher";
-import { TellerSettingsCard } from "@/components/teller-settings-card";
-import { SimpleFinSettingsCard } from "@/components/simplefin-settings-card";
-import { AkoyaSettingsCard } from "@/components/akoya-settings-card";
-import { ConnectionHealthCard } from "@/components/connection-health-card";
 import { HouseholdSettingsCard } from "@/components/household-settings-card";
 import { InstanceAdminCard } from "@/components/instance-admin-card";
 
@@ -57,13 +52,11 @@ export default function SettingsPage() {
 
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<Me>("/api/auth/me") });
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: () => api.get<{ sessions: Array<{ id: string; device_label: string; created_at: string; current: boolean }> }>("/api/auth/sessions") });
-  const creds = useQuery({ queryKey: ["plaid-creds"], queryFn: () => api.get<{ environments: Array<{ environment: string; hasKeys: boolean; updatedAt: string }> }>("/api/plaid/credentials") });
-  const items = useQuery({ queryKey: ["plaid-items"], queryFn: () => api.get<{ items: Array<{ id: string; institution_name: string | null; environment: string; status: string; accounts: Array<{ name: string }> }> }>("/api/plaid/items") });
 
   // Page-level fetch-failure sweep (run-167, mirrors dashboard/reports/budgets/transactions/agents/accounts/plan):
   // any failed top-level query left the page silently half-rendered (empty device list, empty Plaid sections,
   // missing display name). Gate on no-data so a background refetch error never blanks already-rendered settings.
-  const settingsQueries = [me, sessions, creds, items];
+  const settingsQueries = [me, sessions];
   const settingsFailed = settingsQueries.filter((q) => q.isError && !q.data);
   const settingsRetrying = settingsFailed.some((q) => q.isFetching);
   const settingsErrMsg = settingsFailed.length
@@ -75,7 +68,6 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [confirmLogoutAll, setConfirmLogoutAll] = useState(false);
-  const [confirmRemoveItem, setConfirmRemoveItem] = useState<string | null>(null);
   // Density draft: the slider only previews; Apply commits it (issue: it used
   // to resize the live environment while dragging).
   const [densityDraft, setDensityDraft] = useState<number>(density);
@@ -128,108 +120,6 @@ export default function SettingsPage() {
     },
     onError: (e) => setErr(e instanceof Error ? e.message : "Failed to log out all devices."),
   });
-
-  // plaid
-  const [clientId, setClientId] = useState("");
-  const [secret, setSecret] = useState("");
-  const [environment, setEnvironment] = useState<"sandbox" | "production">("sandbox");
-  const [linkToken, setLinkToken] = useState<string | null>(null);
-  const [linking, setLinking] = useState(false);
-  const [reconnectItemId, setReconnectItemId] = useState<string | null>(null);
-  const [reconnectingItem, setReconnectingItem] = useState<string | null>(null);
-  const [showPlaidHelp, setShowPlaidHelp] = useState(false);
-  useEscapeToClose(() => setShowPlaidHelp(false), showPlaidHelp);
-
-  const saveCreds = useMutation({
-    mutationFn: () => api.put("/api/plaid/credentials", { clientId, secret, environment }),
-    onSuccess: () => {
-      setClientId("");
-      setSecret("");
-      setMsg("Connection keys saved and checked.");
-      qc.invalidateQueries({ queryKey: ["plaid-creds"] });
-    },
-    onError: (e) => setErr(e instanceof Error ? e.message : "Failed."),
-  });
-
-  async function startLink() {
-    setLinking(true);
-    setErr(null);
-    try {
-      const res = await api.get<{ linkToken: string }>(`/api/plaid/link-token?environment=${environment}`);
-      setLinkToken(res.linkToken);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Could not create link token.");
-      setLinking(false);
-    }
-  }
-
-  const removeItem = useMutation({
-    mutationFn: (id: string) => api.del(`/api/plaid/items/${id}`),
-    onSuccess: () => {
-      setConfirmRemoveItem(null);
-      qc.invalidateQueries({ queryKey: ["plaid-items"] });
-      qc.invalidateQueries({ queryKey: ["connection-health"] });
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-    },
-    onError: (e) => setErr(e instanceof Error ? e.message : "Failed to remove connection."),
-  });
-
-  // Pull new/changed transactions (and fresh balances) from Plaid now.
-  const syncNow = useMutation({
-    mutationFn: () =>
-      api.post<{ results: Array<{ institution_name: string | null; added: number; modified: number; removed: number; ok: boolean; error?: string }> }>(
-        "/api/transactions/sync"
-      ),
-    onSuccess: (d) => {
-      const changed = d.results.reduce((n, r) => n + r.added + r.modified, 0);
-      const failed = d.results.filter((r) => !r.ok);
-      if (failed.length > 0) {
-        setErr(`Sync finished with errors on ${failed.map((f) => `${f.institution_name ?? "an institution"}${f.error ? `: ${f.error}` : ""}`).join("; ")}.`);
-      } else {
-        setMsg(`Sync complete — ${changed === 0 ? "nothing new" : `${changed} transaction(s) updated`}.`);
-      }
-      qc.invalidateQueries({ queryKey: ["transactions"] });
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-      qc.invalidateQueries({ queryKey: ["summary"] });
-      qc.invalidateQueries({ queryKey: ["plaid-items"] });
-      qc.invalidateQueries({ queryKey: ["connection-health"] });
-    },
-    onError: (e) => setErr(e instanceof Error ? e.message : "Sync failed."),
-  });
-
-  // Re-import a single item's FULL transaction history from Plaid (cursor
-  // reset → Plaid re-delivers everything it has, typically up to 24 months).
-  const [resyncingItem, setResyncingItem] = useState<string | null>(null);
-  const resyncItem = useMutation({
-    mutationFn: async (id: string) => {
-      setResyncingItem(id);
-      setErr(null);
-      try {
-        const r = await api.post<{ ok: boolean; added: number; modified: number; removed: number; error?: string | null; note?: string }>(
-          "/api/plaid/resync",
-          { itemId: id }
-        );
-        if (r.ok) {
-          const total = r.added + r.modified;
-          setMsg(r.note ?? `Re-imported — ${total === 0 ? "no new transactions" : `${total} transaction(s) added/updated`}.`);
-        } else {
-          setErr(r.error ? `Re-import failed: ${r.error}` : "Re-import failed.");
-        }
-      } finally {
-        setResyncingItem(null);
-      }
-      qc.invalidateQueries({ queryKey: ["transactions"] });
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-      qc.invalidateQueries({ queryKey: ["summary"] });
-      qc.invalidateQueries({ queryKey: ["plaid-items"] });
-      qc.invalidateQueries({ queryKey: ["connection-health"] });
-    },
-    onError: (e) => setErr(e instanceof Error ? e.message : "Re-import failed."),
-  });
-
-  // Backfill OLDER history removed (v0.3.39): duplicated "Re-import history"
-  // — both pull what Plaid has, and institutions that cap at ~90 days return
-  // the same window either way. Keep just Re-import + the CSV import panel.
 
   return (
     <div className="space-y-8">
@@ -327,216 +217,10 @@ export default function SettingsPage() {
         <NotificationsSecurityCard setMsg={setMsg} setErr={setErr} />
       </SettingsGroup>
 
-      <SettingsGroup title="Data & sync" description="Pay schedule, device pairing, and phone-data import.">
-        <ConnectionHealthCard setMsg={setMsg} setErr={setErr} />
-
-        {/* Provider-specific connection setup and recovery controls continue below. */}
-
-      <Card className="lg:col-span-2" id="provider-plaid">
-        <CardTitle>Bank connections</CardTitle>
-        <p className="mt-1 text-sm text-text-muted">
-          Aubrieta connects to your bank through Plaid. Paste your free connection keys — they&apos;re encrypted on
-          this device and only ever leave it to talk to your bank. No keys? No problem — track everything manually and
-          add banks later.
-        </p>
-
-        {/* Issue #19: optional guided setup with the correct links */}
-        <div className="mt-3">
-          {!showPlaidHelp ? (
-            <button
-              type="button"
-              onClick={() => setShowPlaidHelp(true)}
-              className="flex items-center gap-1.5 text-sm font-medium text-accent-text transition-colors hover:underline"
-            >
-              <ExternalLink size={14} aria-hidden /> Need keys? Walk me through getting them
-            </button>
-          ) : (
-            <div className="rounded-xl border border-border bg-surface-muted/50 p-4 text-sm">
-              <div className="flex items-start justify-between gap-3">
-                <p className="font-medium text-text">Getting free Plaid keys</p>
-                <button
-                  type="button"
-                  onClick={() => setShowPlaidHelp(false)}
-                  className="text-xs text-text-muted transition-colors hover:text-text"
-                >
-                  Hide
-                </button>
-              </div>
-              <ol className="mt-2 list-inside list-decimal space-y-1.5 text-text-muted">
-                <li>
-                  Create a free account at{" "}
-                  <a href="https://dashboard.plaid.com/signup" target="_blank" rel="noreferrer" className="font-medium text-accent-text">
-                    dashboard.plaid.com/signup
-                  </a>{" "}
-                  (Plaid is free for development; production keys need a quick approval).
-                </li>
-                <li>
-                  Open{" "}
-                  <a href="https://dashboard.plaid.com/developers/keys" target="_blank" rel="noreferrer" className="font-medium text-accent-text">
-                    Dashboard → Developers → Keys
-                  </a>{" "}
-                  (dashboard.plaid.com/developers/keys).
-                </li>
-                <li>
-                  Copy the <strong className="text-text">Client ID</strong> and the{" "}
-                  <strong className="text-text">Secret</strong> for the environment you want — the{" "}
-                  <strong className="text-text">Sandbox</strong> secret starts with &ldquo;sandbox_&rdquo;, the{" "}
-                  <strong className="text-text">Production</strong> secret starts with &ldquo;production_&rdquo;.
-                </li>
-                <li>Paste them below and pick the matching environment, then tap &ldquo;Save &amp; check keys&rdquo;.</li>
-              </ol>
-              <p className="mt-2 text-xs text-text-muted">
-                Don&apos;t want to link a bank at all? Skip this entirely — manual tracking works everywhere and you can
-                add keys any time.
-              </p>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-end gap-3">
-          <div className="min-w-48 flex-1">
-            <label className="mb-1 block text-xs text-text-muted">Client ID</label>
-            <Input aria-label={"Plaid client ID"} placeholder="6543a1b2…" value={clientId} onChange={(e) => setClientId(e.target.value)} />
-          </div>
-          <div className="min-w-48 flex-1">
-            <label className="mb-1 block text-xs text-text-muted">Secret</label>
-            <PasswordInput aria-label={"Plaid secret"} placeholder="sandbox_… / production_…" value={secret} onChange={(e) => setSecret(e.target.value)} />
-          </div>
-          <div className="min-w-32">
-            <label id="plaid-env-label" className="mb-1 block text-xs text-text-muted">
-              Environment
-            </label>
-            <CustomSelect
-              ariaLabel="Plaid environment"
-              value={environment}
-              // SAFETY: the only options are "sandbox" | "production", so v is one of the two literals.
-              onChange={(v) => setEnvironment(v as "sandbox" | "production")}
-              options={[
-                { value: "sandbox", label: "Sandbox", hint: "test data" },
-                { value: "production", label: "Production", hint: "real banks" },
-              ]}
-            />
-          </div>
-          <Button
-            variant="secondary"
-            disabled={saveCreds.isPending || !clientId || !secret}
-            onClick={() => saveCreds.mutate()}
-          >
-            {saveCreds.isPending ? "Checking…" : "Save & check keys"}
-          </Button>
-        </div>
-        <div className="mt-2 text-xs text-text-muted">
-          {creds.data?.environments.map((e) => (
-            <span key={e.environment} className="mr-3">
-              {e.environment}: {e.hasKeys ? "keys saved" : "no keys"}
-            </span>
-          ))}
-        </div>
-
-        <div className="mt-6 flex items-center gap-3">
-          <Button disabled={linking} onClick={startLink}>
-            {linking ? "Opening…" : "+ Connect a bank"}
-          </Button>
-          {items.data && items.data.items.length > 0 && (
-            <Button variant="secondary" disabled={syncNow.isPending} onClick={() => syncNow.mutate()}>
-              {syncNow.isPending ? "Syncing…" : "Sync now"}
-            </Button>
-          )}
-          {linkToken && (
-            <PlaidLinkLauncher
-              token={linkToken}
-              onSuccess={async (publicToken, institutionName) => {
-                await api.post("/api/plaid/exchange", {
-                  publicToken,
-                  environment,
-                  institutionId: null,
-                  institutionName: institutionName ?? null,
-                  updateItemId: reconnectItemId ?? undefined,
-                });
-                setLinkToken(null);
-                setReconnectItemId(null);
-                setLinking(false);
-                qc.invalidateQueries({ queryKey: ["plaid-items"] });
-                qc.invalidateQueries({ queryKey: ["connection-health"] });
-                qc.invalidateQueries({ queryKey: ["accounts"] });
-                qc.invalidateQueries({ queryKey: ["summary"] });
-                qc.invalidateQueries({ queryKey: ["transactions"] });
-                setMsg(
-                  reconnectItemId
-                    ? "Bank re-connected — run a sync to pull the latest transactions."
-                    : "Bank connected — run a sync to pull transactions."
-                );
-              }}
-              onExit={() => {
-                setLinkToken(null);
-                setReconnectItemId(null);
-                setLinking(false);
-              }}
-            />
-          )}
-        </div>
-        <div className="mt-4 space-y-2">
-          {items.data?.items.map((it) => (
-            <div key={it.id} className="flex items-center justify-between rounded-lg bg-surface-muted px-4 py-2.5 text-sm">
-              <span className="min-w-0">
-                <span className="block truncate text-text">
-                  {it.institution_name ?? (it.accounts?.length ? it.accounts.map((a) => a.name).join(", ") : "Institution")}{" "}
-                  <span className="text-text-muted">· {it.environment}</span>
-                </span>
-                {!it.institution_name && it.accounts?.length > 0 && (
-                  <span className="block text-xs text-text-muted">Bank name not captured — shows account names</span>
-                )}
-              </span>
-              <span className="flex shrink-0 items-center gap-3">
-                <Badge className={it.status === "active" || it.status === "linked" ? "bg-success/10 text-success" : "bg-danger/10 text-danger"}>
-                  {it.status}
-                </Badge>
-                {it.status !== "active" && it.status !== "linked" && (
-                  <button
-                    onClick={async () => {
-                      setReconnectingItem(it.id);
-                      setErr(null);
-                      try {
-                        const res = await api.get<{ linkToken: string }>(
-                          `/api/plaid/link-token?environment=${it.environment}&updateItemId=${it.id}`
-                        );
-                        setLinkToken(res.linkToken);
-                        setReconnectItemId(it.id);
-                      } catch (e) {
-                        setErr(e instanceof Error ? e.message : "Could not start re-connect.");
-                      } finally {
-                        setReconnectingItem(null);
-                      }
-                    }}
-                    disabled={reconnectingItem === it.id}
-                    className="text-xs text-accent-text hover:underline disabled:opacity-50"
-                  >
-                    {reconnectingItem === it.id ? "Opening…" : "Reconnect"}
-                  </button>
-                )}
-                <button
-                  onClick={() => resyncItem.mutate(it.id)}
-                  disabled={resyncingItem === it.id}
-                  className="text-xs text-text-muted hover:text-accent-text disabled:opacity-50"
-                  title="Re-import full transaction history from this bank (up to ~24 months)"
-                >
-                  {resyncingItem === it.id ? "Importing…" : "Re-import history"}
-                </button>
-                <button onClick={() => setConfirmRemoveItem(it.id)} className="text-xs text-text-muted hover:text-danger">
-                  Remove
-                </button>
-              </span>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      <TellerSettingsCard setMsg={setMsg} setErr={setErr} />
-      <SimpleFinSettingsCard setMsg={setMsg} setErr={setErr} />
-      <AkoyaSettingsCard setMsg={setMsg} setErr={setErr} />
-      <PaydaysCard setMsg={setMsg} setErr={setErr} />
-      <HubPanel setMsg={setMsg} setErr={setErr} />
-      <PhoneImportPanel setMsg={setMsg} setErr={setErr} />
+      <SettingsGroup title="Planning & device data" description="Pay schedule, hub pairing, and phone-data migration.">
+        <PaydaysCard setMsg={setMsg} setErr={setErr} />
+        <HubPanel setMsg={setMsg} setErr={setErr} />
+        <PhoneImportPanel setMsg={setMsg} setErr={setErr} />
       </SettingsGroup>
 
       <SettingsGroup title="Appearance" description="Theme, accent, and interface density.">
@@ -710,17 +394,6 @@ export default function SettingsPage() {
         onCancel={() => setConfirmLogoutAll(false)}
         onConfirm={() => {
           logoutAll.mutate();
-        }}
-      />
-      <ConfirmDialog
-        open={confirmRemoveItem !== null}
-        title="Remove this bank connection?"
-        message="The link to this institution will be removed. Synced transactions stay in the app."
-        confirmLabel="Remove"
-        busy={removeItem.isPending}
-        onCancel={() => setConfirmRemoveItem(null)}
-        onConfirm={() => {
-          if (confirmRemoveItem) removeItem.mutate(confirmRemoveItem);
         }}
       />
     </div>
