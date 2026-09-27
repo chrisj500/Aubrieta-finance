@@ -140,3 +140,39 @@ describe("createManual writes an initial balance_history point (net-worth trend)
     expect(rows).toHaveLength(0);
   });
 });
+
+describe("account list enrichments and bulk management", () => {
+  it("exposes an effective due date from manual due-day overrides", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "account-due-list");
+    const id = await seedManualAccount(db, user.id, "Rewards Card", "credit");
+    const now = new Date().toISOString();
+    await db.run(
+      "INSERT INTO account_liability_overrides (account_id, user_id, due_day, apr_bps, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)",
+      id, user.id, 15, now, now,
+    );
+    const rows = await createAccountsService(db).list(user.id);
+    expect(rows[0].manual_due_day).toBe(15);
+    expect(rows[0].next_payment_due_date).toMatch(/^\d{4}-\d{2}-15$/);
+  });
+
+  it("bulk-updates selected owned accounts and preserves privacy tightening", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "account-bulk");
+    const a = await seedManualAccount(db, user.id, "Card A", "other");
+    const b = await seedManualAccount(db, user.id, "Card B", "other");
+    const svc = createAccountsService(db);
+
+    const updated = await svc.bulkUpdate(user.id, [a, b, a], {
+      type: "credit",
+      visibility: "private",
+      includeInNetWorth: false,
+    });
+    expect(updated).toBe(2);
+    const rows = await svc.list(user.id);
+    expect(rows.every((row) => row.type === "credit")).toBe(true);
+    expect(rows.every((row) => row.type_override === 1)).toBe(true);
+    expect(rows.every((row) => row.visibility === "private")).toBe(true);
+    expect(rows.every((row) => row.include_in_net_worth === 0)).toBe(true);
+  });
+});
