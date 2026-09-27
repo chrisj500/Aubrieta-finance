@@ -8,6 +8,7 @@ import { PlaidSettingsCard } from "@/components/plaid-settings-card";
 import { SimpleFinSettingsCard } from "@/components/simplefin-settings-card";
 import { AkoyaSettingsCard } from "@/components/akoya-settings-card";
 import { CsvImportCard } from "@/components/csv-import-card";
+import { DataQualityCard } from "@/components/data-quality-card";
 
 export default function DataSyncPage() {
   usePageTitle("Data & Sync");
@@ -34,6 +35,10 @@ export default function DataSyncPage() {
 
       <SettingsGroup title="Status & refresh" description="See every linked institution, the accounts it supplies, and whether anything needs attention.">
         <ConnectionHealthCard setMsg={setMsg} setErr={setErr} />
+      </SettingsGroup>
+
+      <SettingsGroup title="Data quality & coverage" description="Normalize institution names, review card identity confidence, and audit provider/account integrity.">
+        <DataQualityCard setMsg={setMsg} setErr={setErr} />
       </SettingsGroup>
 
       <SettingsGroup title="Financial data providers" description="Connect institutions and use provider-specific recovery or historical-data tools.">

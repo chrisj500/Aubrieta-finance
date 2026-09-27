@@ -1,19 +1,14 @@
 "use client";
 
-import { predictCardIdentity } from "@/lib/card-identity";
+import type { CardIdentity } from "@/lib/card-identity";
 
 export function AccountBrandTile({
-  name,
-  officialName,
-  institutionName,
+  identity,
   mask,
 }: {
-  name: string;
-  officialName?: string | null;
-  institutionName?: string | null;
+  identity: CardIdentity;
   mask?: string | null;
 }) {
-  const identity = predictCardIdentity({ name, officialName, institutionName, mask });
   return (
     <div
       className="relative h-10 w-16 shrink-0 overflow-hidden rounded-md shadow-sm ring-1 ring-black/10"
@@ -22,7 +17,7 @@ export function AccountBrandTile({
         color: identity.foreground,
       }}
       aria-label={`${identity.issuer} ${identity.product} card${mask ? ` ending ${mask}` : ""}`}
-      title={`${identity.issuer} ${identity.product}${identity.confidence === "low" ? " (estimated)" : ""}`}
+      title={`${identity.issuer} ${identity.product}`}
     >
       <span className="absolute left-1.5 top-1 text-[7px] font-semibold uppercase tracking-wide opacity-90">{identity.issuer}</span>
       <span className="absolute bottom-1 left-1.5 max-w-[45px] truncate text-[7px] font-semibold">{identity.product}</span>
