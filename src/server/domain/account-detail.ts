@@ -2,6 +2,7 @@ import { createAccountsService, type AccountRow } from "@/server/domain/accounts
 import { createTransactionsService, type TransactionRow } from "@/server/domain/transactions";
 import { assertAccountReadable } from "@/server/authz/household-access";
 import { getDb, type Db } from "@/server/db/registry";
+import { createAccountLiabilityOverrideService, nextDueDateForDay } from "@/server/domain/account-liability-overrides";
 
 export interface AccountBalancePoint {
   date: string;
@@ -19,7 +20,11 @@ export interface AccountLiabilityDetail {
   lastPaymentAmountCents: number | null;
   lastPaymentDate: string | null;
   rawStatus: string | null;
-  syncedAt: string;
+  syncedAt: string | null;
+  manualDueDay: number | null;
+  manualAprBps: number | null;
+  dueDateSource: "manual" | "provider" | null;
+  aprSource: "manual" | "provider" | null;
 }
 
 export interface AccountHoldingDetail {
@@ -127,6 +132,8 @@ export function createAccountDetailService(db: Db = getDb()) {
         accountId,
       );
 
+      const manualLiability = await createAccountLiabilityOverrideService(db).get(userId, accountId);
+
       const rawHoldings = await db.all<{
         id: string;
         name: string;
@@ -179,19 +186,25 @@ export function createAccountDetailService(db: Db = getDb()) {
         monthIncomeCents,
         monthExpenseCents,
         monthNetCents: monthIncomeCents - monthExpenseCents,
-        liability: liability
+        liability: (liability || manualLiability || base.type === "credit" || base.type === "loan")
           ? {
-              kind: liability.kind,
-              nextPaymentDueDate: liability.next_payment_due_date,
-              minimumPaymentCents: liability.minimum_payment_cents,
-              statementBalanceCents: liability.statement_balance_cents,
-              statementDate: liability.statement_date,
-              nextMonthlyPaymentCents: liability.next_monthly_payment_cents,
-              aprBps: liability.apr_bps,
-              lastPaymentAmountCents: liability.last_payment_amount_cents,
-              lastPaymentDate: liability.last_payment_date,
-              rawStatus: liability.raw_status,
-              syncedAt: liability.synced_at,
+              kind: liability?.kind ?? (base.type === "credit" ? "credit_card" : "loan"),
+              nextPaymentDueDate: manualLiability?.due_day
+                ? nextDueDateForDay(manualLiability.due_day)
+                : liability?.next_payment_due_date ?? null,
+              minimumPaymentCents: liability?.minimum_payment_cents ?? null,
+              statementBalanceCents: liability?.statement_balance_cents ?? null,
+              statementDate: liability?.statement_date ?? null,
+              nextMonthlyPaymentCents: liability?.next_monthly_payment_cents ?? null,
+              aprBps: manualLiability?.apr_bps ?? liability?.apr_bps ?? null,
+              lastPaymentAmountCents: liability?.last_payment_amount_cents ?? null,
+              lastPaymentDate: liability?.last_payment_date ?? null,
+              rawStatus: liability?.raw_status ?? null,
+              syncedAt: liability?.synced_at ?? manualLiability?.updated_at ?? null,
+              manualDueDay: manualLiability?.due_day ?? null,
+              manualAprBps: manualLiability?.apr_bps ?? null,
+              dueDateSource: manualLiability?.due_day ? "manual" : liability?.next_payment_due_date ? "provider" : null,
+              aprSource: manualLiability?.apr_bps != null ? "manual" : liability?.apr_bps != null ? "provider" : null,
             }
           : null,
         holdings,
