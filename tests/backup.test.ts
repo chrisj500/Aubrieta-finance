@@ -18,6 +18,7 @@ import { detectHub, preferredHubUrl } from "@/server/detect/detect";
 import { seedUser } from "./helpers";
 import { GET as backupGet } from "@/app/api/backup/route";
 import { POST as restorePost } from "@/app/api/backup/restore/route";
+import { SOLO_MIGRATIONS } from "@/server/db/migrations-bundle";
 
 function tmpDbPath(): string {
   return path.join(os.tmpdir(), `of-test-${randomUUID()}.db`);
@@ -168,7 +169,8 @@ describe("backup", () => {
 
     const reopened = createDb(p);
     expect(await reopened.get<{ name: string }>("SELECT name FROM budgets WHERE name = 'Legacy restored'")).toMatchObject({ name: "Legacy restored" });
-    expect(await reopened.get<{ user_version: number }>("PRAGMA user_version")).toEqual({ user_version: 28 });
+    const latestMigration = Math.max(...SOLO_MIGRATIONS.map((migration) => migration.version));
+    expect(await reopened.get<{ user_version: number }>("PRAGMA user_version")).toEqual({ user_version: latestMigration });
     expect(await reopened.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='instance_admins'")).toEqual({ name: "instance_admins" });
     reopened.close();
 

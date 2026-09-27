@@ -55,6 +55,17 @@ describe("categories", () => {
     await expect(svc.remove(user.id, system.id)).rejects.toThrow();
   });
 
+  it("maps high-confidence MCCs to system categories and leaves unknown codes alone", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db);
+    const svc = createCategoriesService(db);
+    await svc.ensureSystem(user.id);
+    expect((await svc.matchMcc(user.id, "5812"))?.name).toBe("Food & Dining");
+    expect((await svc.matchMcc(user.id, "5411"))?.name).toBe("Groceries");
+    expect((await svc.matchMcc(user.id, "4511"))?.name).toBe("Travel");
+    expect(await svc.matchMcc(user.id, "9998")).toBeNull();
+  });
+
   describe("match (longest prefix)", () => {
     it("matches exact personal-finance category", async () => {
       const db = createTestDb();

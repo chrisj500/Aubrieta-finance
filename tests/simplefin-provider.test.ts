@@ -41,6 +41,7 @@ function fixture() {
             amount: "-33.00",
             description: "BLUE BOTTLE COFFEE",
             payee: "Blue Bottle",
+            mcc: 5812,
             pending: false,
           },
           {
@@ -151,6 +152,7 @@ describe("SimpleFIN provider", () => {
     const r2 = await provider.syncTransactions!(second, { value: null });
 
     expect(r1.added.map((t) => t.amountMinor)).toEqual([-3300, 250000]);
+    expect(r1.added[0].merchantCategoryCode).toBe("5812");
     expect(r2.added[0].amountMinor).toBe(-1999);
     expect(r1.added[0].externalId).not.toBe(r2.added[0].externalId);
     expect(r1.added[0].accountExternalId).not.toBe(r2.added[0].accountExternalId);
@@ -228,6 +230,9 @@ describe("SimpleFIN provider", () => {
     expect(inferSimpleFinAccountType("Everyday Checking")).toBe("checking");
     expect(inferSimpleFinAccountType("High Yield Savings")).toBe("savings");
     expect(inferSimpleFinAccountType("Visa Signature Card")).toBe("credit_card");
+    expect(inferSimpleFinAccountType("Chase Sapphire Preferred (7781)")).toBe("credit_card");
+    expect(inferSimpleFinAccountType("Freedom Unlimited (2291)")).toBe("credit_card");
+    expect(inferSimpleFinAccountType("Mystery Account", undefined, "-12.34", "5000.00")).toBe("credit_card");
     expect(inferSimpleFinAccountType("Home Mortgage")).toBe("mortgage");
     expect(inferSimpleFinAccountType("Brokerage IRA")).toBe("investment");
     expect(inferSimpleFinAccountType("Mystery Account")).toBe("other");

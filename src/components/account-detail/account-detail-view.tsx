@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -28,6 +28,7 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { Page, PageHeader } from "@/components/ui/page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Money } from "@/components/money";
 
 interface AccountDetail {
@@ -76,7 +77,11 @@ interface AccountDetail {
     lastPaymentAmountCents: number | null;
     lastPaymentDate: string | null;
     rawStatus: string | null;
-    syncedAt: string;
+    syncedAt: string | null;
+    manualDueDay: number | null;
+    manualAprBps: number | null;
+    dueDateSource: "manual" | "provider" | null;
+    aprSource: "manual" | "provider" | null;
   } | null;
   holdings: Array<{
     id: string;
@@ -135,6 +140,9 @@ function typeLabel(type: string | null): string {
 
 export function AccountDetailView({ id }: { id: string }) {
   const [rangeDays, setRangeDays] = useState(90);
+  const [editingLiability, setEditingLiability] = useState(false);
+  const [dueDay, setDueDay] = useState("");
+  const [aprPct, setAprPct] = useState("");
 
   const query = useQuery({
     queryKey: ["accounts", id, "detail"],
@@ -142,6 +150,23 @@ export function AccountDetailView({ id }: { id: string }) {
   });
   const data = query.data;
   usePageTitle(data?.account.name ?? "Account");
+
+  const saveLiability = useMutation({
+    mutationFn: () => api.patch(`/api/accounts/${encodeURIComponent(id)}/liability`, {
+      dueDay: dueDay.trim() ? Number(dueDay) : null,
+      aprPct: aprPct.trim() ? Number(aprPct) : null,
+    }),
+    onSuccess: async () => {
+      setEditingLiability(false);
+      await query.refetch();
+    },
+  });
+
+  function beginLiabilityEdit() {
+    setDueDay(data?.liability?.manualDueDay == null ? "" : String(data.liability.manualDueDay));
+    setAprPct(data?.liability?.manualAprBps == null ? "" : (data.liability.manualAprBps / 100).toFixed(2));
+    setEditingLiability(true);
+  }
 
   const chartData = useMemo(() => {
     if (!data) return [];
@@ -289,34 +314,69 @@ export function AccountDetailView({ id }: { id: string }) {
         )}
       </Card>
 
-      {data.liability ? (
+      {(data.liability || liability) ? (
         <Card>
-          <CardTitle>Debt details</CardTitle>
-          <p className="mt-1 text-xs text-text-muted">Latest provider-confirmed liability information.</p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Debt details</CardTitle>
+              <p className="mt-1 text-xs text-text-muted">Provider data when available; manual due day and APR override provider values.</p>
+            </div>
+            {a.is_owner !== false ? (
+              <Button size="sm" variant="secondary" onClick={beginLiabilityEdit}>
+                Edit manual details
+              </Button>
+            ) : null}
+          </div>
           <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <dt className="text-xs text-text-muted">Next payment</dt>
               <dd className="mt-1 font-medium text-text">
-                {data.liability.minimumPaymentCents != null
+                {data.liability?.minimumPaymentCents != null
                   ? <Money cents={data.liability.minimumPaymentCents} currency={a.currency} />
-                  : data.liability.nextMonthlyPaymentCents != null
+                  : data.liability?.nextMonthlyPaymentCents != null
                     ? <Money cents={data.liability.nextMonthlyPaymentCents} currency={a.currency} />
                     : "—"}
               </dd>
             </div>
             <div>
               <dt className="text-xs text-text-muted">Due date</dt>
-              <dd className="mt-1 font-medium text-text">{data.liability.nextPaymentDueDate ?? "—"}</dd>
+              <dd className="mt-1 flex items-center gap-2 font-medium text-text">
+                {data.liability?.nextPaymentDueDate ?? "—"}
+                {data.liability?.dueDateSource === "manual" ? <Badge className="bg-surface-muted text-text-muted">manual</Badge> : null}
+              </dd>
             </div>
             <div>
               <dt className="text-xs text-text-muted">Statement balance</dt>
-              <dd className="mt-1 font-medium text-text">{data.liability.statementBalanceCents == null ? "—" : <Money cents={data.liability.statementBalanceCents} currency={a.currency} />}</dd>
+              <dd className="mt-1 font-medium text-text">{data.liability?.statementBalanceCents == null ? "—" : <Money cents={data.liability.statementBalanceCents} currency={a.currency} />}</dd>
             </div>
             <div>
               <dt className="text-xs text-text-muted">APR</dt>
-              <dd className="mt-1 font-medium text-text">{data.liability.aprBps == null ? "—" : `${(data.liability.aprBps / 100).toFixed(2)}%`}</dd>
+              <dd className="mt-1 flex items-center gap-2 font-medium text-text">
+                {data.liability?.aprBps == null ? "—" : `${(data.liability.aprBps / 100).toFixed(2)}%`}
+                {data.liability?.aprSource === "manual" ? <Badge className="bg-surface-muted text-text-muted">manual</Badge> : null}
+              </dd>
             </div>
           </dl>
+          {editingLiability ? (
+            <div className="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="liability-due-day" className="mb-1 block text-xs font-medium text-text-muted">Payment due day</label>
+                <Input id="liability-due-day" inputMode="numeric" type="number" min={1} max={31} value={dueDay} onChange={(e) => setDueDay(e.target.value)} placeholder="e.g. 15" />
+                <p className="mt-1 text-xs text-text-muted">Set once; Aubrieta rolls the next due date forward each month.</p>
+              </div>
+              <div>
+                <label htmlFor="liability-apr" className="mb-1 block text-xs font-medium text-text-muted">APR (%)</label>
+                <Input id="liability-apr" inputMode="decimal" type="number" min={0} max={999.99} step="0.01" value={aprPct} onChange={(e) => setAprPct(e.target.value)} placeholder="e.g. 24.99" />
+              </div>
+              {saveLiability.isError ? (
+                <p role="alert" className="text-sm text-danger sm:col-span-2">{saveLiability.error instanceof Error ? saveLiability.error.message : "Could not save debt details."}</p>
+              ) : null}
+              <div className="flex gap-2 sm:col-span-2">
+                <Button disabled={saveLiability.isPending} onClick={() => saveLiability.mutate()}>{saveLiability.isPending ? "Saving…" : "Save"}</Button>
+                <Button variant="secondary" disabled={saveLiability.isPending} onClick={() => setEditingLiability(false)}>Cancel</Button>
+              </div>
+            </div>
+          ) : null}
         </Card>
       ) : null}
 

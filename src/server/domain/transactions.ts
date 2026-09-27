@@ -17,6 +17,7 @@ export interface TransactionRow {
   merchant_name: string | null;
   category_path: string | null;
   personal_finance_category: string | null;
+  merchant_category_code: string | null;
   is_transfer: number;
   pending: number;
   user_category_id: string | null;

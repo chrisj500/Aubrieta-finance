@@ -28,6 +28,7 @@ export interface IngestTxn {
   merchantName: string | null;
   categoryPath: string | null;
   personalFinanceCategory: string | null;
+  merchantCategoryCode?: string | null;
   pending: boolean;
   isTransfer?: boolean;
 }
@@ -135,7 +136,7 @@ export function createIngestService(db: Db = getDb()) {
         await db.run(
           `UPDATE transactions
               SET account_id = ?, amount_cents = ?, date = ?, authorized_date = ?, name = ?,
-                  merchant_name = ?, category_path = ?, personal_finance_category = ?, pending = ?,
+                  merchant_name = ?, category_path = ?, personal_finance_category = ?, merchant_category_code = ?, pending = ?,
                   user_category_id = COALESCE(user_category_id, ?), is_transfer = ?, source = ?,
                   plaid_transaction_id = CASE WHEN ? = 'plaid' THEN ? ELSE plaid_transaction_id END
             WHERE id = ?`,
@@ -147,6 +148,7 @@ export function createIngestService(db: Db = getDb()) {
           txn.merchantName,
           txn.categoryPath,
           txn.personalFinanceCategory,
+          txn.merchantCategoryCode ?? null,
           txn.pending ? 1 : 0,
           categoryId,
           txn.isTransfer ? 1 : 0,
@@ -167,7 +169,7 @@ export function createIngestService(db: Db = getDb()) {
           `UPDATE transactions
               SET plaid_transaction_id = CASE WHEN ? = 'plaid' THEN ? ELSE plaid_transaction_id END,
                   amount_cents = ?, date = ?, authorized_date = ?, name = ?,
-                  merchant_name = ?, category_path = ?, personal_finance_category = ?, pending = ?,
+                  merchant_name = ?, category_path = ?, personal_finance_category = ?, merchant_category_code = ?, pending = ?,
                   user_category_id = COALESCE(user_category_id, ?), is_transfer = ?, source = ?
             WHERE id = ?`,
           txn.provider,
@@ -179,6 +181,7 @@ export function createIngestService(db: Db = getDb()) {
           txn.merchantName,
           txn.categoryPath,
           txn.personalFinanceCategory,
+          txn.merchantCategoryCode ?? null,
           txn.pending ? 1 : 0,
           categoryId,
           txn.isTransfer ? 1 : 0,
@@ -195,9 +198,9 @@ export function createIngestService(db: Db = getDb()) {
       await db.run(
         `INSERT INTO transactions
            (id, account_id, plaid_transaction_id, amount_cents, date, authorized_date, name,
-            merchant_name, category_path, personal_finance_category, pending, user_category_id,
+            merchant_name, category_path, personal_finance_category, merchant_category_code, pending, user_category_id,
             is_transfer, source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         txn.accountRowId,
         txn.provider === "plaid" ? txn.externalId : null,
@@ -208,6 +211,7 @@ export function createIngestService(db: Db = getDb()) {
         txn.merchantName,
         txn.categoryPath,
         txn.personalFinanceCategory,
+        txn.merchantCategoryCode ?? null,
         txn.pending ? 1 : 0,
         categoryId,
         txn.isTransfer ? 1 : 0,

@@ -17,6 +17,7 @@ interface SimpleFinConnection {
   last_sync_at: string | null;
   last_error: string | null;
   accounts: Array<{ id: string; name: string }>;
+  backfillBefore: string | null;
 }
 
 interface PendingGrant {
@@ -112,6 +113,22 @@ export function SimpleFinSettingsCard({
       setErr(
         e instanceof Error ? e.message : "Could not discard the saved claim.",
       ),
+  });
+
+  const backfill = useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ added: number; modified: number; oldestFetchedDate: string; nextBackfillBefore: string }>(
+        `/api/simplefin/connections/${id}/backfill`,
+      ),
+    onSuccess: (result) => {
+      setErr(null);
+      setMsg(
+        `SimpleFIN history extended through ${result.oldestFetchedDate} — ${result.added} older transaction(s) added${result.modified ? `, ${result.modified} refreshed` : ""}.`,
+      );
+      refreshFinance();
+    },
+    onError: (e) =>
+      setErr(e instanceof Error ? e.message : "Could not pull older SimpleFIN history."),
   });
 
   const remove = useMutation({
@@ -226,6 +243,9 @@ export function SimpleFinSettingsCard({
                       ).toLocaleString()}`
                     : ""}
                 </p>
+                {connection.backfillBefore ? (
+                  <p className="mt-0.5 text-xs text-text-muted">Older-history cursor: before {connection.backfillBefore}</p>
+                ) : null}
                 {connection.last_error && (
                   <p className="mt-0.5 text-xs text-danger">
                     {connection.last_error}
@@ -242,6 +262,14 @@ export function SimpleFinSettingsCard({
                 >
                   {connection.status}
                 </Badge>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={backfill.isPending}
+                  onClick={() => backfill.mutate(connection.id)}
+                >
+                  {backfill.isPending ? "Pulling…" : "Pull older history"}
+                </Button>
                 <button
                   className="text-xs text-text-muted hover:text-danger"
                   disabled={remove.isPending}

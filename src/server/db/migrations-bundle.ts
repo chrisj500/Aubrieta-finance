@@ -120,5 +120,17 @@ export const SOLO_MIGRATIONS: { version: number; sql: string }[] = [
   {
     version: 28,
     sql: "-- 028: Persist provider investment securities and holdings.\n-- Holdings are point-in-time snapshots refreshed during provider sync.\n\nCREATE TABLE investment_securities (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  connection_id TEXT NOT NULL REFERENCES provider_connections(id) ON DELETE CASCADE,\n  provider TEXT NOT NULL,\n  external_security_id TEXT NOT NULL,\n  name TEXT NOT NULL,\n  ticker TEXT,\n  isin TEXT,\n  cusip TEXT,\n  security_type TEXT,\n  currency TEXT NOT NULL DEFAULT 'USD',\n  updated_at TEXT NOT NULL,\n  UNIQUE (connection_id, provider, external_security_id)\n);\n\nCREATE INDEX idx_investment_securities_user\n  ON investment_securities(user_id, provider, ticker);\n\nCREATE TABLE investment_holdings (\n  id TEXT PRIMARY KEY,\n  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,\n  security_id TEXT NOT NULL REFERENCES investment_securities(id) ON DELETE CASCADE,\n  connection_id TEXT NOT NULL REFERENCES provider_connections(id) ON DELETE CASCADE,\n  provider TEXT NOT NULL,\n  quantity REAL NOT NULL,\n  institution_price_cents INTEGER,\n  institution_value_cents INTEGER,\n  cost_basis_cents INTEGER,\n  currency TEXT NOT NULL DEFAULT 'USD',\n  updated_at TEXT NOT NULL,\n  UNIQUE (account_id, security_id)\n);\n\nCREATE INDEX idx_investment_holdings_user\n  ON investment_holdings(user_id, account_id);\n",
+  },
+  {
+    version: 29,
+    sql: "-- 029: Preserve merchant category codes from providers for deterministic local categorization.\nALTER TABLE transactions ADD COLUMN merchant_category_code TEXT;\nCREATE INDEX idx_transactions_mcc ON transactions(merchant_category_code);\n",
+  },
+  {
+    version: 30,
+    sql: "-- 030: Optional user-entered liability metadata that can coexist with provider data.\n-- Due day is recurring so users set it once; Aubrieta derives the next date.\nCREATE TABLE account_liability_overrides (\n  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,\n  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  due_day INTEGER CHECK (due_day IS NULL OR (due_day >= 1 AND due_day <= 31)),\n  apr_bps INTEGER CHECK (apr_bps IS NULL OR (apr_bps >= 0 AND apr_bps <= 100000)),\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n);\nCREATE INDEX idx_account_liability_overrides_user ON account_liability_overrides(user_id);\n",
+  },
+  {
+    version: 31,
+    sql: "-- 031: Independent historical-backfill cursor so older imports never disturb forward sync.\nALTER TABLE provider_connections ADD COLUMN backfill_cursor TEXT;\n",
   }
 ];

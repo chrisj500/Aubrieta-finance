@@ -120,4 +120,25 @@ describe("account detail", () => {
     });
     expect(detail.holdings[0].gainPct).toBeCloseTo(20);
   });
+  it("merges recurring manual due-day/APR overrides without requiring provider liability data", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "account-detail-manual-liability");
+    const accountId = randomUUID();
+    const ts = new Date().toISOString();
+    await db.run(
+      `INSERT INTO accounts (id, user_id, name, type, current_balance_cents, available_balance_cents, currency, created_at)
+       VALUES (?, ?, 'Card', 'credit', -10000, 500000, 'USD', ?)`,
+      accountId, user.id, ts,
+    );
+    const { createAccountLiabilityOverrideService } = await import("@/server/domain/account-liability-overrides");
+    await createAccountLiabilityOverrideService(db).set(user.id, accountId, { dueDay: 15, aprBps: 2499 });
+
+    const detail = await createAccountDetailService(db).get(user.id, accountId);
+    expect(detail.liability?.manualDueDay).toBe(15);
+    expect(detail.liability?.aprBps).toBe(2499);
+    expect(detail.liability?.dueDateSource).toBe("manual");
+    expect(detail.liability?.aprSource).toBe("manual");
+    expect(detail.liability?.nextPaymentDueDate).toMatch(/^\d{4}-\d{2}-15$/);
+  });
+
 });
