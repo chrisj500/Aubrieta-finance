@@ -63,6 +63,7 @@ export interface ProviderTransaction {
   categoryHint?: string | null;
   categoryPath?: string | null;
   personalFinanceCategory?: string | null;
+  merchantCategoryCode?: string | null;
   pendingExternalId?: string | null;
 }
 

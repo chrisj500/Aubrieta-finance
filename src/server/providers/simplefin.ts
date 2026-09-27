@@ -76,6 +76,7 @@ interface SimpleFinTransaction {
   memo?: string;
   pending?: boolean;
   transacted_at?: number;
+  mcc?: string | number;
   extra?: Record<string, unknown>;
 }
 
@@ -129,19 +130,34 @@ function isoDate(unixSeconds: number | null | undefined, fallback: Date): string
   return fallback.toISOString().slice(0, 10);
 }
 
-export function inferSimpleFinAccountType(name: string, extra?: Record<string, unknown>): NormalizedAccountType {
+export function inferSimpleFinAccountType(
+  name: string,
+  extra?: Record<string, unknown>,
+  balance?: string | number | null,
+  availableBalance?: string | number | null,
+): NormalizedAccountType {
   const rawExtra =
     (typeof extra?.["account-type"] === "string" ? extra["account-type"] : null) ??
     (typeof extra?.type === "string" ? extra.type : null) ??
     "";
   const text = `${name} ${rawExtra}`.toLowerCase();
-  if (/\b(credit|credit card|visa|mastercard|amex)\b/.test(text)) return "credit_card";
+  if (/\b(credit|credit card|visa|mastercard|amex|american express|card|platinum|sapphire|freedom|bonvoy|marriott|southwest|united quest|hyatt|ihg|delta reserve)\b/.test(text)) return "credit_card";
   if (/\b(checking|chequing|current)\b/.test(text)) return "checking";
   if (/\b(savings?|money market|certificate|\bcd\b)\b/.test(text)) return "savings";
   if (/\b(mortgage|home loan|heloc)\b/.test(text)) return "mortgage";
   if (/\b(loan|student loan|auto loan|line of credit)\b/.test(text)) return "loan";
   if (/\b(invest|brokerage|401k|403b|ira|roth|retire|securities)\b/.test(text)) return "investment";
   if (/\b(cash|wallet|prepaid)\b/.test(text)) return "cash";
+
+  // SimpleFIN does not standardize account type. A negative current balance
+  // paired with positive available credit is a strong credit-card signal.
+  // Keep this behind explicit name/type checks so an overdrawn checking
+  // account is not casually reclassified as revolving credit.
+  const current = balance == null ? null : Number(balance);
+  const available = availableBalance == null ? null : Number(availableBalance);
+  if (Number.isFinite(current) && current! < 0 && Number.isFinite(available) && available! > 0) {
+    return "credit_card";
+  }
   return "other";
 }
 
@@ -267,7 +283,12 @@ function normalizedCurrency(raw: string | undefined): string {
 
 function mapAccount(account: SimpleFinAccount, secret: SimpleFinConnectionSecret): ProviderAccount {
   const name = account.name?.trim() || account.id;
-  const type = inferSimpleFinAccountType(name, account.extra);
+  const type = inferSimpleFinAccountType(
+    name,
+    account.extra,
+    account.balance,
+    account["available-balance"],
+  );
   const rawCurrent = parseMoney(account.balance);
   const rawAvailable = parseMoney(account["available-balance"]);
   const liability = type === "credit_card" || type === "mortgage" || type === "loan";
@@ -306,6 +327,12 @@ function mapTransaction(
       : typeof txn.extra?.merchant === "string"
         ? safeProviderMessage(txn.extra.merchant)
         : null;
+  const merchantCategoryCode = (() => {
+    if (txn.mcc == null) return null;
+    const raw = String(txn.mcc).trim();
+    if (!/^\d{1,4}$/.test(raw)) return null;
+    return raw.padStart(4, "0");
+  })();
   const postedDate = isoDate(txn.posted || txn.transacted_at, now);
   const authorizedDate = txn.transacted_at ? isoDate(txn.transacted_at, now) : null;
   return {
@@ -322,6 +349,7 @@ function mapTransaction(
     categoryHint: category,
     categoryPath: category,
     personalFinanceCategory: null,
+    merchantCategoryCode,
   };
 }
 

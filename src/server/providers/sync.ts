@@ -213,11 +213,13 @@ export async function syncProviderConnection(
           txn.externalId,
         );
         const category =
+          (await categories.matchLearned(input.userId, txn.merchant ?? txn.name)) ??
           (await categories.match(
             input.userId,
             txn.categoryPath ?? txn.categoryHint ?? null,
             txn.personalFinanceCategory ?? null,
           )) ??
+          (await categories.matchMcc(input.userId, txn.merchantCategoryCode)) ??
           (await categories.matchByName(input.userId, txn.merchant ?? txn.name));
 
         await ingest.upsert(
@@ -234,6 +236,7 @@ export async function syncProviderConnection(
             merchantName: txn.merchant ?? null,
             categoryPath: txn.categoryPath ?? txn.categoryHint ?? null,
             personalFinanceCategory: txn.personalFinanceCategory ?? null,
+            merchantCategoryCode: txn.merchantCategoryCode ?? null,
             pending: txn.pending,
           },
           category?.id ?? null,

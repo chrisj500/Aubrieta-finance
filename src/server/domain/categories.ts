@@ -372,6 +372,27 @@ const NAME_KEYWORDS: Array<[keyword: string, categoryName: string]> = [
   ["LA QUINTA", "Travel"],
 ];
 
+const MCC_CATEGORY_RULES: Array<{ from: number; to: number; category: string }> = [
+  { from: 3000, to: 3999, category: "Travel" },
+  { from: 4111, to: 4131, category: "Transportation" },
+  { from: 4411, to: 4511, category: "Travel" },
+  { from: 4722, to: 4722, category: "Travel" },
+  { from: 4784, to: 4789, category: "Transportation" },
+  { from: 4812, to: 4900, category: "Utilities" },
+  { from: 5200, to: 5399, category: "Shopping" },
+  { from: 5411, to: 5499, category: "Groceries" },
+  { from: 5541, to: 5542, category: "Transportation" },
+  { from: 5811, to: 5814, category: "Food & Dining" },
+  { from: 5912, to: 5912, category: "Healthcare" },
+  { from: 5940, to: 5999, category: "Shopping" },
+  { from: 6513, to: 6513, category: "Housing" },
+  { from: 7011, to: 7033, category: "Travel" },
+  { from: 7512, to: 7512, category: "Travel" },
+  { from: 7523, to: 7549, category: "Transportation" },
+  { from: 7832, to: 7999, category: "Entertainment" },
+  { from: 8011, to: 8099, category: "Healthcare" },
+];
+
 export function createCategoriesService(db: Db = getDb()) {
   return {
     async list(userId: string): Promise<CategoryRow[]> {
@@ -494,6 +515,20 @@ export function createCategoriesService(db: Db = getDb()) {
         }
       }
       return best;
+    },
+
+    /** High-confidence merchant category code mapping. Unknown MCCs are
+     * deliberately left uncategorized rather than guessed. */
+    async matchMcc(userId: string, mcc: string | null | undefined): Promise<CategoryRow | null> {
+      if (!mcc || !/^\d{4}$/.test(mcc)) return null;
+      const n = Number(mcc);
+      const rule = MCC_CATEGORY_RULES.find((r) => n >= r.from && n <= r.to);
+      if (!rule) return null;
+      return (await db.get<CategoryRow>(
+        "SELECT * FROM categories WHERE user_id = ? AND name = ? COLLATE NOCASE AND enabled = 1",
+        userId,
+        rule.category,
+      )) ?? null;
     },
 
     /**
