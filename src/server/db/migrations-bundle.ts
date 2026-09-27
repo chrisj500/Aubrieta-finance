@@ -144,5 +144,9 @@ export const SOLO_MIGRATIONS: { version: number; sql: string }[] = [
   {
     version: 34,
     sql: "-- 034: Per-user custom institution/group icons.\n-- Stored as small normalized data URLs so icons travel with DB backups and\n-- remain portable to solo SQLite / a future PostgreSQL adapter.\nCREATE TABLE institution_icon_overrides (\n  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  institution_key TEXT NOT NULL,\n  institution_name TEXT NOT NULL,\n  data_url TEXT NOT NULL,\n  mime_type TEXT NOT NULL,\n  size_bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  PRIMARY KEY (user_id, institution_key)\n);\nCREATE INDEX idx_institution_icon_overrides_user\n  ON institution_icon_overrides(user_id);\n",
+  },
+  {
+    version: 35,
+    sql: "-- 035: Per-user custom artwork for individual accounts.\n-- Account artwork is stored separately from inferred card identity so users\n-- can use an exact card image without changing provider/product metadata.\nCREATE TABLE account_icon_overrides (\n  account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,\n  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  data_url TEXT NOT NULL,\n  mime_type TEXT NOT NULL,\n  size_bytes INTEGER NOT NULL,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL,\n  PRIMARY KEY (account_id, user_id)\n);\nCREATE INDEX idx_account_icon_overrides_user\n  ON account_icon_overrides(user_id);\n",
   }
 ];
