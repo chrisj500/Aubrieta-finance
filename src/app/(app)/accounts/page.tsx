@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { CustomSelect } from "@/components/ui/custom-select";
 import { Money } from "@/components/money";
 import { AccountBrandTile } from "@/components/account-brand-tile";
+import type { CardIdentity, CardProduct } from "@/lib/card-identity";
 import { useKeyboardHeight } from "@/lib/use-keyboard-height";
 import { useIncludePending } from "@/lib/pending-pref";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -50,6 +51,7 @@ interface Account {
   balance_with_pending_cents?: number;
   next_payment_due_date?: string | null;
   manual_due_day?: number | null;
+  card_identity?: CardIdentity | null;
 }
 
 const TYPES = ["depository", "credit", "investment", "loan", "other"];
@@ -111,6 +113,11 @@ export default function AccountsPage() {
     queryFn: () => api.get<{ accounts: Account[] }>("/api/accounts"),
   });
   const { data, isLoading } = accountsQuery;
+  const cardProducts = useQuery({
+    queryKey: ["card-products"],
+    queryFn: () => api.get<{ products: CardProduct[] }>("/api/accounts/card-products"),
+    staleTime: 60 * 60 * 1000,
+  });
   const deleted = useQuery({
     queryKey: ["accounts", "deleted"],
     queryFn: () => api.get<{ accounts: Account[] }>("/api/accounts?deleted=1"),
@@ -149,9 +156,18 @@ export default function AccountsPage() {
   const [editingAccount, setEditingAccount] = useState<{ id: string; name: string; description: string } | null>(null);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editingCardIdentity, setEditingCardIdentity] = useState<Account | null>(null);
+  const [identityChoice, setIdentityChoice] = useState("");
+  const [identityIssuer, setIdentityIssuer] = useState("");
+  const [identityProduct, setIdentityProduct] = useState("");
+  const [identityNetwork, setIdentityNetwork] = useState("");
   useEscapeToClose(() => { if (!updateAccountMeta.isPending) setEditingAccount(null); }, editingAccount !== null);
   const editDialogA11yRef = useDialogA11y(editingAccount !== null, () => {
     if (!updateAccountMeta.isPending) setEditingAccount(null);
+  });
+  useEscapeToClose(() => { if (!updateCardIdentity.isPending && !resetCardIdentity.isPending) setEditingCardIdentity(null); }, editingCardIdentity !== null);
+  const identityDialogA11yRef = useDialogA11y(editingCardIdentity !== null, () => {
+    if (!updateCardIdentity.isPending && !resetCardIdentity.isPending) setEditingCardIdentity(null);
   });
 
   const invalidate = () => {
@@ -214,6 +230,42 @@ export default function AccountsPage() {
     onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to update account details."),
   });
 
+  const updateCardIdentity = useMutation({
+    mutationFn: async () => {
+      if (!editingCardIdentity) throw new Error("No card selected.");
+      if (identityChoice && identityChoice !== "__custom__") {
+        return api.put(`/api/accounts/${editingCardIdentity.id}/card-identity`, { productKey: identityChoice });
+      }
+      return api.put(`/api/accounts/${editingCardIdentity.id}/card-identity`, {
+        productKey: null,
+        issuer: identityIssuer.trim() || null,
+        product: identityProduct.trim() || null,
+        network: identityNetwork.trim() || null,
+      });
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setEditingCardIdentity(null);
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["data-quality"] });
+    },
+    onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to update card identity."),
+  });
+
+  const resetCardIdentity = useMutation({
+    mutationFn: async () => {
+      if (!editingCardIdentity) throw new Error("No card selected.");
+      return api.del(`/api/accounts/${editingCardIdentity.id}/card-identity`);
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setEditingCardIdentity(null);
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["data-quality"] });
+    },
+    onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to reset card identity."),
+  });
+
   const bulkUpdate = useMutation({
     mutationFn: () =>
       api.patch<{ updated: number }>("/api/accounts/bulk", {
@@ -239,6 +291,15 @@ export default function AccountsPage() {
 
   function removeAccount(a: Account) {
     setConfirmDelete({ id: a.id, name: a.name });
+  }
+
+  function openCardIdentity(account: Account) {
+    const identity = account.card_identity;
+    setEditingCardIdentity(account);
+    setIdentityChoice(identity?.productKey ?? "__custom__");
+    setIdentityIssuer(identity?.issuer ?? account.institution_name ?? "");
+    setIdentityProduct(identity?.product === "Card" ? "" : identity?.product ?? "");
+    setIdentityNetwork(identity?.network ?? "");
   }
 
   const visibleAccounts = useMemo(() => {
@@ -531,8 +592,20 @@ export default function AccountsPage() {
                                   {selected && <Check size={12} aria-hidden />}
                                 </button>
                               ) : <span className="h-5 w-5 shrink-0" />}
-                              {account.type === "credit" ? (
-                                <AccountBrandTile name={account.name} officialName={account.official_name} institutionName={account.institution_name} mask={account.mask} />
+                              {account.type === "credit" && account.card_identity ? (
+                                account.is_owner ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openCardIdentity(account)}
+                                    aria-label={`Edit card identity for ${account.name}`}
+                                    title="Edit card identity"
+                                    className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                                  >
+                                    <AccountBrandTile identity={account.card_identity} mask={account.mask} />
+                                  </button>
+                                ) : (
+                                  <AccountBrandTile identity={account.card_identity} mask={account.mask} />
+                                )
                               ) : (
                                 <span className="flex h-10 w-16 shrink-0 items-center justify-center rounded-md bg-surface-muted text-text-muted"><Icon size={19} aria-hidden /></span>
                               )}
@@ -637,6 +710,101 @@ export default function AccountsPage() {
             ))}
           </ul>
         </Card>
+      )}
+
+      {editingCardIdentity && editingCardIdentity.card_identity && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => !updateCardIdentity.isPending && !resetCardIdentity.isPending && setEditingCardIdentity(null)}
+        >
+          <div
+            ref={identityDialogA11yRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Edit card identity for ${editingCardIdentity.name}`}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <AccountBrandTile identity={editingCardIdentity.card_identity} mask={editingCardIdentity.mask} />
+                <div className="min-w-0">
+                  <CardTitle>Card identity</CardTitle>
+                  <p className="mt-0.5 truncate text-xs text-text-muted">{editingCardIdentity.name}</p>
+                </div>
+              </div>
+              <button aria-label="Close card identity editor" onClick={() => !updateCardIdentity.isPending && !resetCardIdentity.isPending && setEditingCardIdentity(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-muted hover:text-text"><X size={17} /></button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-text-muted">Known card product</label>
+                <CustomSelect
+                  ariaLabel="Card product identity"
+                  value={identityChoice}
+                  onChange={(value) => {
+                    setIdentityChoice(value);
+                    if (value && value !== "__custom__") {
+                      const product = cardProducts.data?.products.find((item) => item.key === value);
+                      if (product) {
+                        setIdentityIssuer(product.issuer);
+                        setIdentityProduct(product.product);
+                        setIdentityNetwork(product.network ?? "");
+                      }
+                    }
+                  }}
+                  options={[
+                    { value: "__custom__", label: "Custom identity…" },
+                    ...(cardProducts.data?.products ?? []).map((product) => ({
+                      value: product.key,
+                      label: `${product.issuer} — ${product.product}`,
+                    })),
+                  ]}
+                />
+              </div>
+
+              {identityChoice === "__custom__" && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="card-issuer" className="mb-1 block text-xs font-medium text-text-muted">Issuer</label>
+                    <Input id="card-issuer" value={identityIssuer} onChange={(e) => setIdentityIssuer(e.target.value)} placeholder="e.g. Chase" maxLength={100} />
+                  </div>
+                  <div>
+                    <label htmlFor="card-product" className="mb-1 block text-xs font-medium text-text-muted">Product</label>
+                    <Input id="card-product" value={identityProduct} onChange={(e) => setIdentityProduct(e.target.value)} placeholder="e.g. Sapphire Preferred" maxLength={120} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label htmlFor="card-network" className="mb-1 block text-xs font-medium text-text-muted">Network <span className="font-normal">(optional)</span></label>
+                    <Input id="card-network" value={identityNetwork} onChange={(e) => setIdentityNetwork(e.target.value)} placeholder="VISA, MC, AMEX…" maxLength={40} />
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-text-muted">
+                Aubrieta uses this identity for the card tile and future product metadata. It does not change the bank connection or account number.
+              </p>
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  {editingCardIdentity.card_identity.source === "override" && (
+                    <Button variant="secondary" size="sm" disabled={resetCardIdentity.isPending || updateCardIdentity.isPending} onClick={() => resetCardIdentity.mutate()}>
+                      {resetCardIdentity.isPending ? "Resetting…" : "Reset to automatic"}
+                    </Button>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="secondary" disabled={updateCardIdentity.isPending || resetCardIdentity.isPending} onClick={() => setEditingCardIdentity(null)}>Cancel</Button>
+                  <Button
+                    disabled={updateCardIdentity.isPending || resetCardIdentity.isPending || (identityChoice === "__custom__" && !identityIssuer.trim() && !identityProduct.trim())}
+                    onClick={() => updateCardIdentity.mutate()}
+                  >
+                    {updateCardIdentity.isPending ? "Saving…" : "Save identity"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {editingAccount && (

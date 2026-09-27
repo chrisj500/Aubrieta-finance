@@ -20,6 +20,7 @@ describe("Data & Sync information architecture", () => {
     expect(page).toContain("<SimpleFinSettingsCard");
     expect(page).toContain("<AkoyaSettingsCard");
     expect(page).toContain("<CsvImportCard");
+    expect(page).toContain("<DataQualityCard");
     expect(page).not.toContain("TellerSettingsCard");
   });
 });
