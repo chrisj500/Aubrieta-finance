@@ -63,13 +63,28 @@ describe("institution-first Accounts experience", () => {
     expect(page).not.toContain('absolute left-11 top-11');
   });
 
+  it("keeps account filtering and sorting visible while scrolling", () => {
+    expect(page).toContain('className="sticky top-2 z-20 flex flex-col gap-3 rounded-2xl');
+    expect(page).toContain('className="min-w-0 space-y-6 overflow-x-clip"');
+    expect(page).not.toContain('className="min-w-0 space-y-6 overflow-x-hidden"');
+  });
+
+  it("uses one left-side Edit action for account metadata, artwork, and due day", () => {
+    expect(page).toContain('aria-label={`Edit ${account.name}`}');
+    expect(page).toContain('onClick={() => openAccountEditor(account)}');
+    expect(page).not.toContain('aria-label={`Edit artwork for ${account.name}`}');
+    expect(page).toContain('id="edit-account-name"');
+    expect(page).toContain('id="edit-account-due-day"');
+    expect(page).toContain('Use default artwork');
+    expect(page).toContain('Save changes');
+    expect(page).toContain('api.patch(`/api/accounts/${editingAccount.id}/liability`, { dueDay })');
+  });
+
   it("supports institution and per-account artwork overrides", () => {
     expect(page).toContain('queryKey: ["institution-icons"]');
     expect(page).toContain('queryKey: ["account-icons"]');
-    expect(page).toContain('aria-label={`Edit artwork for ${account.name}`}');
     expect(page).toContain('Save icon');
     expect(page).toContain('Use default icon');
-    expect(page).toContain('Save artwork');
     expect(page).toContain('Use default artwork');
     expect(page).toContain('customAccountIcon.dataUrl');
   });
