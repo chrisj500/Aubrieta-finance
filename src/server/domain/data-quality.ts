@@ -62,6 +62,17 @@ function effectiveMask(row: Pick<AuditAccountRow, "mask" | "name" | "official_na
   return null;
 }
 
+
+function duplicateNameKey(row: Pick<AuditAccountRow, "name" | "official_name">): string {
+  const value = (row.official_name?.trim() || row.name.trim())
+    .replace(/(?:\(|\b)\d{4}\)?\s*$/, "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+  return value;
+}
+
 function isHealthyStatus(status: string): boolean {
   return status === "active" || status === "linked";
 }
@@ -122,7 +133,9 @@ export function createDataQualityService(db: Db) {
         const mask = effectiveMask(row);
         if (!mask || !row.institution_name) continue;
         const type = row.type ?? "other";
-        const key = `${row.institution_name.toLowerCase()}\u0000${mask}\u0000${type}`;
+        const nameKey = duplicateNameKey(row);
+        if (!nameKey) continue;
+        const key = `${row.institution_name.toLowerCase()}\u0000${mask}\u0000${type}\u0000${nameKey}`;
         const existing = duplicateGroups.get(key) ?? { institutionName: row.institution_name, mask, type, accountNames: [] };
         existing.accountNames.push(row.name);
         duplicateGroups.set(key, existing);
