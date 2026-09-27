@@ -18,7 +18,7 @@ describe("transactions search debounce", () => {
     expect(src).toContain("value={q}");
     expect(src).toContain('onChange={(e) => setQ(e.target.value)}');
     // memo deps reference debouncedQ, not q (from/to were added for date-range)
-    expect(src).toMatch(/\[\s*debouncedQ,\s*accountId,\s*categoryId,\s*pendingOnly,\s*from,\s*to\s*\]/);
+    expect(src).toMatch(/\[\s*debouncedQ,\s*accountId,\s*categoryId,\s*pendingOnly,\s*from,\s*to,\s*sortBy,\s*sortDir\s*\]/);
   });
 
   it("Clear filters resets the debounced search immediately", () => {
@@ -53,6 +53,18 @@ describe("transactions search debounce", () => {
     expect(src).toContain('url.get("from")');
     expect(src).toContain('url.get("to")');
     expect(src).toContain('{ value: UNCATEGORIZED_FILTER, label: "Uncategorized" }');
+  });
+
+  it("offers compact reversible icon sorting for date, vendor, and amount", () => {
+    const src = read("src/app/(app)/transactions/page.tsx");
+    expect(src).toContain('aria-label="Sort transactions"');
+    expect(src).toContain('Icon: CalendarDays');
+    expect(src).toContain('Icon: ALargeSmall');
+    expect(src).toContain('Icon: DollarSign');
+    expect(src).toContain('field === sortBy');
+    expect(src).toContain('sortDir === "asc" ? "desc" : "asc"');
+    expect(src).toContain('p.set("sort", sortBy)');
+    expect(src).toContain('p.set("dir", sortDir)');
   });
 
 });

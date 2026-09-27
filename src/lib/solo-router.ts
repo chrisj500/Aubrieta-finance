@@ -485,6 +485,12 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
         categoryId: query.get("categoryId") ?? undefined,
         q: query.get("q") ?? undefined,
         pendingOnly: query.get("pending") === "1" || query.get("pending") === "true",
+        sortBy: (["date", "vendor", "amount"].includes(query.get("sort") ?? "")
+          ? query.get("sort")
+          : undefined) as TransactionFilters["sortBy"],
+        sortDir: (["asc", "desc"].includes(query.get("dir") ?? "")
+          ? query.get("dir")
+          : undefined) as TransactionFilters["sortDir"],
         // "Needs your category" queue (dashboard review widget). Must be
         // forwarded or the widget's ?review=1 is silently dropped in solo mode
         // and the queue would count EVERY transaction, not just uncategorized.

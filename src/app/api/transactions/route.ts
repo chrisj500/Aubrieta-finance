@@ -19,6 +19,8 @@ const listSchema = z.object({
   q: z.string().optional(),
   pending: z.coerce.boolean().optional(),
   review: z.coerce.boolean().optional(),
+  sort: z.enum(["date", "vendor", "amount"]).optional(),
+  dir: z.enum(["asc", "desc"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -55,6 +57,8 @@ export async function GET(req: NextRequest) {
       ...parsed.data,
       categoryId: parsed.data.uncategorized === true ? null : parsed.data.categoryId,
       review: parsed.data.review === true,
+      sortBy: parsed.data.sort,
+      sortDir: parsed.data.dir,
       accountIds: agentAccountIds,
       pendingOnly: parsed.data.pending === true,
     };
