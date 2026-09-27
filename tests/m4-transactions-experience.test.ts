@@ -25,4 +25,12 @@ describe("M4.2 Transactions experience", () => {
     expect(src).toContain('onClick={clearFilters}');
     expect(src).toContain('{hasFilters ? (');
   });
+  it("keeps category and exclusion inline and pins filters near the scroll edge", () => {
+    expect(src).toContain('className="sticky top-2 z-20 p-3 shadow-sm sm:p-4"');
+    expect(src).toContain('ariaLabel={`Category for ${t.name}`}');
+    expect(src).toContain('>\n                      Exclude\n                    </label>');
+    expect(src).toContain('routine review never requires opening details');
+    expect(src).not.toContain('Exclude from budgets\n                      </label>');
+  });
+
 });

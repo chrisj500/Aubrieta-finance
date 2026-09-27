@@ -426,7 +426,7 @@ export default function TransactionsPage() {
 
       {/* Everyday transaction controls stay prominent; history/import tools are
           deliberately separated below so the primary workflow remains calm. */}
-      <Card className="sticky top-20 z-20 p-3 sm:p-4">
+      <Card className="sticky top-2 z-20 p-3 shadow-sm sm:p-4">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3" role="search">
             <div className="relative min-w-0 flex-1 basis-64">
@@ -997,20 +997,21 @@ export default function TransactionsPage() {
               const expanded = expandedId === t.id;
               return (
                 <div key={t.id}>
-                  {/* summary row — tap to expand */}
-                  <button
-                    type="button"
-                    aria-expanded={expanded}
-                    onClick={() => setExpandedId(expanded ? null : t.id)}
-                    className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-surface-muted/40 md:px-5"
-                  >
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ background: t.category_color ?? "var(--border)" }}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-3">
+                  {/* Primary transaction row. Category + budget exclusion stay
+                      visible so routine review never requires opening details. */}
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-3.5 transition-colors hover:bg-surface-muted/30 md:grid-cols-[minmax(0,1fr)_11rem_auto_auto] md:px-5 lg:grid-cols-[minmax(0,1fr)_12rem_auto_auto]">
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      onClick={() => setExpandedId(expanded ? null : t.id)}
+                      className="col-start-1 row-start-1 flex min-w-0 items-center gap-3 text-left md:col-start-1 md:row-start-1"
+                    >
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ background: t.category_color ?? "var(--border)" }}
+                        aria-hidden
+                      />
+                      <span className="min-w-0">
                         <span className="flex min-w-0 items-center gap-2">
                           <span className="min-w-0 truncate text-[15px] font-medium text-text">{t.name}</span>
                           {t.pending === 1 && (
@@ -1018,66 +1019,78 @@ export default function TransactionsPage() {
                               pending
                             </span>
                           )}
-                          {t.exclude_from_budgets === 1 && (
-                            <span className="shrink-0 rounded bg-surface-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
-                              excluded
-                            </span>
-                          )}
                         </span>
-                        <span className={`money shrink-0 text-[15px] font-semibold ${isExpense ? "text-danger" : "text-success"}`}>
-                          <Money cents={t.amount_cents} signed />
+                        <span className="mt-0.5 block truncate text-xs text-text-muted">
+                          {t.date} · {t.account_name}
                         </span>
                       </span>
-                      <span className="mt-0.5 block truncate text-xs text-text-muted">
-                        {t.date} · {t.account_name}
-                      </span>
-                    </span>
-                    <ChevronDown
-                      size={16}
-                      aria-hidden
-                      className={`shrink-0 text-text-muted transition-transform ${expanded ? "rotate-180" : ""}`}
-                    />
-                  </button>
+                    </button>
 
-                  {/* expanded details — categorize, exclude, delete */}
-                  {expanded && (
-                    <div className="flex flex-wrap items-center gap-3 border-t border-border bg-surface-muted/40 px-4 py-3 md:px-5">
-                      <label
-                        className={`flex cursor-pointer select-none items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-                          t.exclude_from_budgets === 1
-                            ? "border-accent bg-accent/15 text-accent-text"
-                            : "border-border bg-surface text-text"
-                        }`}
-                      >
-                        <span
-                          role="switch"
-                          aria-checked={t.exclude_from_budgets === 1}
-                          className={`relative h-[18px] w-8 shrink-0 rounded-full transition-colors ${
-                            t.exclude_from_budgets === 1 ? "bg-accent" : "bg-surface-muted"
-                          }`}
-                        >
-                          <span
-                            className={`absolute top-[2px] left-0.5 h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-                              t.exclude_from_budgets === 1 ? "translate-x-[14px]" : "translate-x-0"
-                            }`}
-                          />
-                        </span>
-                        <input
-                          type="checkbox"
-                          className="sr-only"
-                          checked={t.exclude_from_budgets === 1}
-                          onChange={(e) => toggleExclude.mutate({ id: t.id, exclude: e.target.checked })}
-                        />
-                        Exclude from budgets
-                      </label>
+                    <div className="col-start-1 row-start-2 min-w-0 md:col-start-2 md:row-start-1">
                       <CustomSelect
                         ariaLabel={`Category for ${t.name}`}
-                        className="w-44"
+                        className="w-full"
                         value={t.user_category_id ?? ""}
                         onChange={(v) => setCategory.mutate({ id: t.id, categoryId: v || null })}
                         placeholder="Uncategorized"
                         options={(categories.data?.categories ?? []).map((c) => ({ value: c.id, label: c.name }))}
                       />
+                    </div>
+
+                    <label
+                      className={`col-start-2 row-start-2 flex h-10 cursor-pointer select-none items-center justify-self-end gap-2 rounded-xl border px-3 text-xs font-medium transition-colors md:col-start-3 md:row-start-1 ${
+                        t.exclude_from_budgets === 1
+                          ? "border-accent bg-accent/15 text-accent-text"
+                          : "border-border bg-surface text-text-muted hover:text-text"
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`flex h-4 w-4 items-center justify-center rounded border ${
+                          t.exclude_from_budgets === 1
+                            ? "border-accent bg-accent text-[var(--accent-foreground)]"
+                            : "border-border bg-surface"
+                        }`}
+                      >
+                        {t.exclude_from_budgets === 1 && (
+                          <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M2 6.5L4.5 9L10 3" />
+                          </svg>
+                        )}
+                      </span>
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={t.exclude_from_budgets === 1}
+                        onChange={(e) => toggleExclude.mutate({ id: t.id, exclude: e.target.checked })}
+                      />
+                      Exclude
+                    </label>
+
+                    <div className="col-start-2 row-start-1 flex items-center justify-end gap-2 md:col-start-4 md:row-start-1">
+                      <span className={`money shrink-0 text-[15px] font-semibold ${isExpense ? "text-danger" : "text-success"}`}>
+                        <Money cents={t.amount_cents} signed />
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`${expanded ? "Hide" : "Show"} details for ${t.name}`}
+                        aria-expanded={expanded}
+                        onClick={() => setExpandedId(expanded ? null : t.id)}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
+                      >
+                        <ChevronDown
+                          size={16}
+                          aria-hidden
+                          className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Secondary details / manual-row actions only. */}
+                  {expanded && (
+                    <div className="flex flex-wrap items-center gap-3 border-t border-border bg-surface-muted/40 px-4 py-2.5 md:px-5">
+                      <span className="text-xs text-text-muted">Source: {t.source === "manual" ? "Manual" : t.source}</span>
                       <div className="flex-1" />
                       {t.source === "manual" && (
                         <button

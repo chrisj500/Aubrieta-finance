@@ -39,7 +39,10 @@ describe("motion tokens honor M3 (Q12)", () => {
     expect(tx).toMatch(/transition-transform/);
     expect(tx).toMatch(/translate-x-\[20px\]/);
     const tr = read(join(root, "src/app/(app)/transactions/page.tsx"));
+    // Transactions no longer use a sliding switch for exclusion; the details
+    // chevron still uses a transform-only motion affordance.
     expect(tr).toMatch(/transition-transform/);
-    expect(tr).toMatch(/translate-x-\[14px\]/);
+    expect(tr).toMatch(/rotate-180/);
+    expect(tr).not.toMatch(/translate-x-\[14px\]/);
   });
 });
