@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { usePageTitle } from "@/lib/use-page-title";
 import { useEscapeToClose } from "@/lib/use-escape-to-close";
 import { useDialogA11y } from "@/lib/use-dialog-a11y";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import NextImage from "next/image";
 import {
   CreditCard, Landmark, PiggyBank, TrendingUp, Wallet, CircleHelp, X, ChevronDown,
   RotateCcw, ALargeSmall, DollarSign, CalendarClock, ArrowUp, ArrowDown, Check, Trash2, Pencil,
@@ -24,6 +25,15 @@ import { useKeyboardHeight } from "@/lib/use-keyboard-height";
 import { useIncludePending } from "@/lib/pending-pref";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FloatingAddButton } from "@/components/ui/floating-add-button";
+import { sortInstitutionGroups } from "@/lib/account-group-sort";
+
+interface InstitutionIcon {
+  institutionKey: string;
+  institutionName: string;
+  dataUrl: string;
+  mimeType: string;
+  sizeBytes: number;
+}
 
 interface Account {
   id: string;
@@ -94,6 +104,46 @@ function typeIcon(type: string | null) {
   return (type && TYPE_ICONS[type]) || CircleHelp;
 }
 
+async function prepareInstitutionIcon(file: File): Promise<string> {
+  const allowed = new Set(["image/png", "image/jpeg", "image/webp"]);
+  if (!allowed.has(file.type)) throw new Error("Choose a PNG, JPEG, or WebP image.");
+  if (file.size > 8 * 1024 * 1024) throw new Error("Choose an image smaller than 8 MB.");
+
+  const sourceDataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("That image could not be read."));
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("That image could not be read."));
+    img.src = sourceDataUrl;
+  });
+  const size = 160;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Image resizing is unavailable in this browser.");
+  ctx.clearRect(0, 0, size, size);
+  const scale = Math.min(size / image.naturalWidth, size / image.naturalHeight);
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  ctx.drawImage(image, Math.round((size - width) / 2), Math.round((size - height) / 2), width, height);
+
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.9));
+  const output = blob ?? await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!output) throw new Error("That image could not be prepared.");
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("That image could not be read."));
+    reader.readAsDataURL(output);
+  });
+}
+
 function AccountsSkeleton() {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" role="status" aria-busy="true" aria-label="Loading your accounts">
@@ -113,6 +163,11 @@ export default function AccountsPage() {
     queryFn: () => api.get<{ accounts: Account[] }>("/api/accounts"),
   });
   const { data, isLoading } = accountsQuery;
+  const institutionIcons = useQuery({
+    queryKey: ["institution-icons"],
+    queryFn: () => api.get<{ icons: InstitutionIcon[] }>("/api/institution-icons"),
+    staleTime: 5 * 60 * 1000,
+  });
   const cardProducts = useQuery({
     queryKey: ["card-products"],
     queryFn: () => api.get<{ products: CardProduct[] }>("/api/accounts/card-products"),
@@ -161,6 +216,11 @@ export default function AccountsPage() {
   const [identityIssuer, setIdentityIssuer] = useState("");
   const [identityProduct, setIdentityProduct] = useState("");
   const [identityNetwork, setIdentityNetwork] = useState("");
+  const [editingInstitutionIcon, setEditingInstitutionIcon] = useState<string | null>(null);
+  const [institutionIconPreview, setInstitutionIconPreview] = useState<string | null>(null);
+  const [institutionIconError, setInstitutionIconError] = useState<string | null>(null);
+  const [institutionIconPreparing, setInstitutionIconPreparing] = useState(false);
+  const institutionIconFileRef = useRef<HTMLInputElement>(null);
   useEscapeToClose(() => { if (!updateAccountMeta.isPending) setEditingAccount(null); }, editingAccount !== null);
   const editDialogA11yRef = useDialogA11y(editingAccount !== null, () => {
     if (!updateAccountMeta.isPending) setEditingAccount(null);
@@ -168,6 +228,12 @@ export default function AccountsPage() {
   useEscapeToClose(() => { if (!updateCardIdentity.isPending && !resetCardIdentity.isPending) setEditingCardIdentity(null); }, editingCardIdentity !== null);
   const identityDialogA11yRef = useDialogA11y(editingCardIdentity !== null, () => {
     if (!updateCardIdentity.isPending && !resetCardIdentity.isPending) setEditingCardIdentity(null);
+  });
+  useEscapeToClose(() => {
+    if (!saveInstitutionIcon.isPending && !removeInstitutionIcon.isPending && !institutionIconPreparing) setEditingInstitutionIcon(null);
+  }, editingInstitutionIcon !== null);
+  const institutionIconDialogA11yRef = useDialogA11y(editingInstitutionIcon !== null, () => {
+    if (!saveInstitutionIcon.isPending && !removeInstitutionIcon.isPending && !institutionIconPreparing) setEditingInstitutionIcon(null);
   });
 
   const invalidate = () => {
@@ -266,6 +332,37 @@ export default function AccountsPage() {
     onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to reset card identity."),
   });
 
+  const saveInstitutionIcon = useMutation({
+    mutationFn: async () => {
+      if (!editingInstitutionIcon || !institutionIconPreview) throw new Error("Choose an icon first.");
+      return api.put<{ icon: InstitutionIcon }>("/api/institution-icons", {
+        institutionName: editingInstitutionIcon,
+        dataUrl: institutionIconPreview,
+      });
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setInstitutionIconError(null);
+      setEditingInstitutionIcon(null);
+      qc.invalidateQueries({ queryKey: ["institution-icons"] });
+    },
+    onError: (e) => setInstitutionIconError(e instanceof Error ? e.message : "Failed to save institution icon."),
+  });
+
+  const removeInstitutionIcon = useMutation({
+    mutationFn: async () => {
+      if (!editingInstitutionIcon) throw new Error("No institution selected.");
+      return api.del(`/api/institution-icons?institutionName=${encodeURIComponent(editingInstitutionIcon)}`);
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setInstitutionIconError(null);
+      setEditingInstitutionIcon(null);
+      qc.invalidateQueries({ queryKey: ["institution-icons"] });
+    },
+    onError: (e) => setInstitutionIconError(e instanceof Error ? e.message : "Failed to remove institution icon."),
+  });
+
   const bulkUpdate = useMutation({
     mutationFn: () =>
       api.patch<{ updated: number }>("/api/accounts/bulk", {
@@ -302,6 +399,15 @@ export default function AccountsPage() {
     setIdentityNetwork(identity?.network ?? "");
   }
 
+  const institutionIconMap = useMemo(() => new Map((institutionIcons.data?.icons ?? []).map((icon) => [icon.institutionName, icon])), [institutionIcons.data?.icons]);
+
+  function openInstitutionIconEditor(institutionName: string) {
+    setEditingInstitutionIcon(institutionName);
+    setInstitutionIconPreview(institutionIconMap.get(institutionName)?.dataUrl ?? null);
+    setInstitutionIconError(null);
+    if (institutionIconFileRef.current) institutionIconFileRef.current.value = "";
+  }
+
   const visibleAccounts = useMemo(() => {
     const rows = (data?.accounts ?? []).filter((account) =>
       accountFilter === "all" || (account.type ?? "other") === accountFilter,
@@ -334,23 +440,7 @@ export default function AccountsPage() {
       groups.set(key, rows);
     }
     const rows = [...groups.entries()].map(([name, accounts]) => ({ name, accounts }));
-    const direction = sortDir === "asc" ? 1 : -1;
-    return rows.sort((a, b) => {
-      if (sortBy === "balance") {
-        const total = (group: Account[]) => group.reduce((sum, account) => sum + Math.abs(includePending ? (account.balance_with_pending_cents ?? account.current_balance_cents ?? 0) : (account.current_balance_cents ?? 0)), 0);
-        return (total(a.accounts) - total(b.accounts)) * direction || a.name.localeCompare(b.name);
-      }
-      if (sortBy === "due") {
-        const earliest = (group: Account[]) => group.map((account) => account.next_payment_due_date).filter((date): date is string => Boolean(date)).sort()[0] ?? null;
-        const ad = earliest(a.accounts);
-        const bd = earliest(b.accounts);
-        if (!ad && !bd) return a.name.localeCompare(b.name);
-        if (!ad) return 1;
-        if (!bd) return -1;
-        return ad.localeCompare(bd) * direction || a.name.localeCompare(b.name);
-      }
-      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) * direction;
-    });
+    return sortInstitutionGroups(rows, sortBy, sortDir, includePending);
   }, [visibleAccounts, sortBy, sortDir, includePending]);
 
   function applySort(field: AccountSort) {
@@ -499,6 +589,7 @@ export default function AccountsPage() {
         <div className="space-y-3">
           {institutionGroups.map((group) => {
             const expanded = expandedGroups.includes(group.name);
+            const customInstitutionIcon = institutionIconMap.get(group.name);
             const owned = group.accounts.filter((account) => account.is_owner);
             const selectedOwned = owned.filter((account) => selectedIds.includes(account.id));
             const allOwnedSelected = owned.length > 0 && selectedOwned.length === owned.length;
@@ -522,7 +613,7 @@ export default function AccountsPage() {
             const earliestDue = group.accounts.map((account) => account.next_payment_due_date).filter(Boolean).sort()[0] ?? null;
 
             return (
-              <section key={group.name} className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+              <section key={group.name} className="relative overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
                 <button
                   type="button"
                   aria-expanded={expanded}
@@ -530,7 +621,9 @@ export default function AccountsPage() {
                   className="grid w-full gap-3 px-4 py-4 text-left transition-colors hover:bg-surface-muted/35 md:grid-cols-[minmax(12rem,1.4fr)_minmax(9rem,0.8fr)_minmax(9rem,0.8fr)_auto] md:items-center md:px-5"
                 >
                   <span className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-muted text-text-muted" aria-hidden><Landmark size={19} /></span>
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-muted text-text-muted" aria-hidden>
+                      {customInstitutionIcon ? <NextImage src={customInstitutionIcon.dataUrl} alt="" width={40} height={40} unoptimized className="h-full w-full object-contain" /> : <Landmark size={19} />}
+                    </span>
                     <span className="min-w-0">
                       <span className="block truncate text-base font-semibold text-text">{group.name}</span>
                       <span className="mt-0.5 block text-xs text-text-muted">
@@ -557,6 +650,15 @@ export default function AccountsPage() {
                     {expanded ? "Hide accounts" : "Show accounts"}
                     <ChevronDown size={17} className={`text-text-muted transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden />
                   </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Edit ${group.name} icon`}
+                  title={`Change ${group.name} icon`}
+                  onClick={() => openInstitutionIconEditor(group.name)}
+                  className="absolute left-11 top-11 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface text-text-muted shadow-sm transition-colors hover:text-accent-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                >
+                  <Pencil size={11} aria-hidden />
                 </button>
 
                 {expanded && (
@@ -710,6 +812,75 @@ export default function AccountsPage() {
             ))}
           </ul>
         </Card>
+      )}
+
+      {editingInstitutionIcon && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => !saveInstitutionIcon.isPending && !removeInstitutionIcon.isPending && !institutionIconPreparing && setEditingInstitutionIcon(null)}
+        >
+          <div
+            ref={institutionIconDialogA11yRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Edit ${editingInstitutionIcon} icon`}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <CardTitle>Institution icon</CardTitle>
+                <p className="mt-1 text-xs text-text-muted">{editingInstitutionIcon}</p>
+              </div>
+              <button aria-label="Close institution icon editor" onClick={() => !saveInstitutionIcon.isPending && !removeInstitutionIcon.isPending && !institutionIconPreparing && setEditingInstitutionIcon(null)} className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface-muted hover:text-text"><X size={17} /></button>
+            </div>
+
+            <div className="flex items-center gap-4 rounded-xl border border-border bg-surface-muted/30 p-4">
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-muted text-text-muted ring-1 ring-border">
+                {institutionIconPreview ? <NextImage src={institutionIconPreview} alt="Icon preview" width={80} height={80} unoptimized className="h-full w-full object-contain" /> : <Landmark size={32} aria-hidden />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <input
+                  ref={institutionIconFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="sr-only"
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    setInstitutionIconPreparing(true);
+                    setInstitutionIconError(null);
+                    try { setInstitutionIconPreview(await prepareInstitutionIcon(file)); }
+                    catch (e) { setInstitutionIconError(e instanceof Error ? e.message : "That image could not be prepared."); }
+                    finally { setInstitutionIconPreparing(false); }
+                  }}
+                />
+                <Button type="button" variant="secondary" size="sm" disabled={institutionIconPreparing || saveInstitutionIcon.isPending || removeInstitutionIcon.isPending} onClick={() => institutionIconFileRef.current?.click()}>
+                  {institutionIconPreparing ? "Preparing…" : institutionIconPreview ? "Choose another image" : "Choose image"}
+                </Button>
+                <p className="mt-2 text-xs text-text-muted">PNG, JPEG, or WebP. Aubrieta resizes it to a small square icon before saving.</p>
+              </div>
+            </div>
+
+            {institutionIconError && <p role="alert" className="mt-3 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-xs text-danger">{institutionIconError}</p>}
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                {institutionIconMap.has(editingInstitutionIcon) && (
+                  <Button type="button" variant="secondary" size="sm" disabled={removeInstitutionIcon.isPending || saveInstitutionIcon.isPending || institutionIconPreparing} onClick={() => removeInstitutionIcon.mutate()}>
+                    {removeInstitutionIcon.isPending ? "Removing…" : "Use default icon"}
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" disabled={saveInstitutionIcon.isPending || removeInstitutionIcon.isPending || institutionIconPreparing} onClick={() => setEditingInstitutionIcon(null)}>Cancel</Button>
+                <Button type="button" disabled={!institutionIconPreview || saveInstitutionIcon.isPending || removeInstitutionIcon.isPending || institutionIconPreparing} onClick={() => saveInstitutionIcon.mutate()}>
+                  {saveInstitutionIcon.isPending ? "Saving…" : "Save icon"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {editingCardIdentity && editingCardIdentity.card_identity && (

@@ -38,6 +38,7 @@ import { createProjectionService } from "@/server/domain/projection";
 import { seedSoloDemo } from "@/lib/solo-demo-seed";
 import { createOnboardingService } from "@/server/domain/onboarding";
 import { createCustomViewsService, WIDGET_TABS } from "@/server/domain/custom-views";
+import { createInstitutionIconService } from "@/server/domain/institution-icons";
 import { capScopes, createAgentPrefsService, type AgentTab } from "@/server/domain/agent-prefs";
 import { authorizeSoloRemoteRequest } from "@/server/authz/solo-remote-policy";
 
@@ -142,6 +143,7 @@ async function handlers(db: Db) {
   const projection = createProjectionService(db);
   const onboarding = createOnboardingService(db);
   const customViews = createCustomViewsService(db);
+  const institutionIcons = createInstitutionIconService(db);
 
   async function deviceUserId(): Promise<string> {
     const user = await solo.getDeviceUser();
@@ -163,6 +165,7 @@ async function handlers(db: Db) {
     projection,
     onboarding,
     customViews,
+    institutionIcons,
     deviceUserId,
   };
 }
@@ -406,6 +409,25 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
       const userId = await h.deviceUserId();
       await h.deviceLock.setBiometric(userId, false);
       return ok({ ok: true });
+    }
+
+
+    // ── Institution icons ──────────────────────────────────────────────
+    if (method === "GET" && path === "/api/institution-icons") {
+      const userId = await h.deviceUserId();
+      return ok({ icons: await h.institutionIcons.list(userId) });
+    }
+    if (method === "PUT" && path === "/api/institution-icons") {
+      const userId = await h.deviceUserId();
+      const institutionName = typeof B?.institutionName === "string" ? B.institutionName : "";
+      const dataUrl = typeof B?.dataUrl === "string" ? B.dataUrl : "";
+      return ok({ icon: await h.institutionIcons.set(userId, institutionName, dataUrl) });
+    }
+    if (method === "DELETE" && path === "/api/institution-icons") {
+      const userId = await h.deviceUserId();
+      const institutionName = query.get("institutionName") ?? "";
+      await h.institutionIcons.remove(userId, institutionName);
+      return { status: 204, data: null };
     }
 
     // ── Accounts (manual) ───────────────────────────────────────────────
