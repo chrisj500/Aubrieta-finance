@@ -13,8 +13,10 @@ import type {
 function fakeProvider(): {
   provider: SimpleFinProvider;
   setDiscoverHealthy(value: boolean): void;
+  syncCursors: Array<string | null>;
 } {
   let discoverHealthy = false;
+  const syncCursors: Array<string | null> = [];
 
   const provider: SimpleFinProvider = {
     descriptor: {
@@ -54,14 +56,16 @@ function fakeProvider(): {
       }];
     },
 
-    async syncTransactions(): Promise<ProviderTransactionSync> {
+    async syncTransactions(_secret, cursor): Promise<ProviderTransactionSync> {
+      syncCursors.push(cursor.value);
+      const backfill = cursor.value?.startsWith("sf1:") && cursor.value !== "sf1:123" && syncCursors.length > 1;
       return {
         added: [{
-          externalId: "sf:scope-1:a:acct-1:t:txn-1",
+          externalId: backfill ? `sf:scope-1:a:acct-1:t:old-${syncCursors.length}` : "sf:scope-1:a:acct-1:t:txn-1",
           accountExternalId: "sf:scope-1:a:acct-1",
           amountMinor: -1_250,
           currency: "USD",
-          date: "2026-09-24",
+          date: backfill ? "2026-07-15" : "2026-09-24",
           authorizedDate: null,
           name: "Coffee",
           merchant: "Coffee",
@@ -79,6 +83,7 @@ function fakeProvider(): {
 
   return {
     provider,
+    syncCursors,
     setDiscoverHealthy(value: boolean) {
       discoverHealthy = value;
     },
@@ -224,4 +229,30 @@ describe("SimpleFIN service", () => {
       await db.get("SELECT id FROM transactions LIMIT 1"),
     ).toBeTruthy();
   });
+  it("backfills older SimpleFIN history without moving the forward sync cursor", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "simplefin-backfill");
+    const fake = fakeProvider();
+    fake.setDiscoverHealthy(true);
+    const service = createSimpleFinService(db, fake.provider);
+    const connected = await service.connectSetupToken(user.id, "setup-token");
+    expect(connected.connected).toBe(true);
+    const connection = await db.get<{ id: string; sync_cursor: string }>(
+      "SELECT id, sync_cursor FROM provider_connections WHERE user_id = ? AND provider = 'simplefin'",
+      user.id,
+    );
+
+    const result = await service.backfillConnection(user.id, connection!.id, 1);
+    expect(result.added).toBe(1);
+    expect(fake.syncCursors.at(-1)).toMatch(/^sf1:\d+$/);
+
+    const after = await db.get<{ sync_cursor: string; backfill_cursor: string }>(
+      "SELECT sync_cursor, backfill_cursor FROM provider_connections WHERE id = ?",
+      connection!.id,
+    );
+    expect(after?.sync_cursor).toBe("sf1:123");
+    expect(after?.backfill_cursor).toMatch(/^sfb1:\d+$/);
+    expect((await db.get<{ n: number }>("SELECT COUNT(*) AS n FROM transactions"))?.n).toBe(2);
+  });
+
 });

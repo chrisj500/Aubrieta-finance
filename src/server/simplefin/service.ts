@@ -9,10 +9,19 @@ import {
 } from "@/server/providers/simplefin";
 import { ensureProviderConnection } from "@/server/providers/connections";
 import { safeSyncProviderConnection, type ProviderSyncResult } from "@/server/providers/sync";
+import { createCategoriesService } from "@/server/domain/categories";
+import { createIngestService } from "@/server/domain/ingest";
+import { markLinkedTransfers } from "@/server/domain/transfers";
 
 function now(): string {
   return new Date().toISOString();
 }
+
+const DAY_SECONDS = 86_400;
+const BACKFILL_WINDOW_DAYS = 45;
+const BACKFILL_OVERLAP_DAYS = 5;
+const BACKFILL_PREFIX = "sfb1:";
+const FORWARD_CURSOR_PREFIX = "sf1:";
 
 function aad(userId: string, id: string): string {
   return `${userId}:provider:${id}`;
@@ -208,9 +217,10 @@ export function createSimpleFinService(
         status: string;
         last_sync_at: string | null;
         last_error: string | null;
+        backfill_cursor: string | null;
       }>(
         `SELECT id, external_connection_id, institution_name, institution_external_id,
-                environment, status, last_sync_at, last_error
+                environment, status, last_sync_at, last_error, backfill_cursor
            FROM provider_connections
           WHERE user_id = ? AND provider = 'simplefin'
           ORDER BY institution_name COLLATE NOCASE, created_at DESC`,
@@ -226,7 +236,16 @@ export function createSimpleFinService(
             ORDER BY a.name COLLATE NOCASE`,
           row.id,
         );
-        connections.push({ ...row, accounts });
+        const backfillSeconds = row.backfill_cursor?.startsWith(BACKFILL_PREFIX)
+          ? Number.parseInt(row.backfill_cursor.slice(BACKFILL_PREFIX.length), 10)
+          : NaN;
+        connections.push({
+          ...row,
+          backfillBefore: Number.isFinite(backfillSeconds)
+            ? new Date(backfillSeconds * 1000).toISOString().slice(0, 10)
+            : null,
+          accounts,
+        });
       }
 
       const pendingGrants = await db.all<{
@@ -256,6 +275,106 @@ export function createSimpleFinService(
       );
 
       return { connections, pendingGrants };
+    },
+
+    async backfillConnection(userId: string, connectionId: string, windows = 3) {
+      const count = Math.max(1, Math.min(3, Math.floor(windows)));
+      const secret = await getConnectionSecret(userId, connectionId);
+      const connection = await db.get<{ backfill_cursor: string | null }>(
+        "SELECT backfill_cursor FROM provider_connections WHERE id = ? AND user_id = ? AND provider = 'simplefin'",
+        connectionId,
+        userId,
+      );
+      if (!connection) throw new Error("SimpleFIN connection not found.");
+
+      const refs = await db.all<{ account_id: string; external_account_id: string }>(
+        `SELECT account_id, external_account_id FROM account_provider_refs
+          WHERE user_id = ? AND connection_id = ? AND provider = 'simplefin'`,
+        userId, connectionId,
+      );
+      const rowByExternal = new Map(refs.map((r) => [r.external_account_id, r.account_id]));
+      if (rowByExternal.size === 0) throw new Error("SimpleFIN connection has no linked accounts.");
+
+      let endSeconds = connection.backfill_cursor?.startsWith(BACKFILL_PREFIX)
+        ? Number.parseInt(connection.backfill_cursor.slice(BACKFILL_PREFIX.length), 10)
+        : NaN;
+      if (!Number.isFinite(endSeconds)) {
+        const oldest = await db.get<{ oldest: string | null }>(
+          `SELECT MIN(t.date) AS oldest
+             FROM transactions t
+             JOIN account_provider_refs r ON r.account_id = t.account_id
+            WHERE r.connection_id = ? AND r.provider = 'simplefin' AND t.source = 'simplefin'`,
+          connectionId,
+        );
+        const anchor = oldest?.oldest
+          ? Math.floor(new Date(`${oldest.oldest}T00:00:00Z`).getTime() / 1000)
+          : Math.floor(Date.now() / 1000);
+        endSeconds = anchor + BACKFILL_OVERLAP_DAYS * DAY_SECONDS;
+      }
+
+      const categories = createCategoriesService(db);
+      const ingest = createIngestService(db);
+      await categories.ensureSystem(userId);
+      let added = 0;
+      let modified = 0;
+      let oldestFetched = endSeconds;
+
+      for (let i = 0; i < count; i++) {
+        const startSeconds = Math.max(0, endSeconds - BACKFILL_WINDOW_DAYS * DAY_SECONDS);
+        const res = await provider.syncTransactions?.(secret, { value: `${FORWARD_CURSOR_PREFIX}${startSeconds}` });
+        if (!res) throw new Error("SimpleFIN transaction sync is unavailable.");
+
+        const ingestRows = async (rows: typeof res.added) => {
+          for (const txn of rows) {
+            const accountId = rowByExternal.get(txn.accountExternalId);
+            if (!accountId) continue;
+            const existing = await db.get<{ transaction_id: string }>(
+              "SELECT transaction_id FROM transaction_provider_refs WHERE provider = 'simplefin' AND external_transaction_id = ?",
+              txn.externalId,
+            );
+            const category =
+              (await categories.matchLearned(userId, txn.merchant ?? txn.name)) ??
+              (await categories.match(userId, txn.categoryPath ?? txn.categoryHint ?? null, txn.personalFinanceCategory ?? null)) ??
+              (await categories.matchMcc(userId, txn.merchantCategoryCode)) ??
+              (await categories.matchByName(userId, txn.merchant ?? txn.name));
+            await ingest.upsert(userId, {
+              provider: "simplefin",
+              connectionId,
+              externalId: txn.externalId,
+              accountRowId: accountId,
+              amountCents: txn.amountMinor,
+              date: txn.date,
+              authorizedDate: txn.authorizedDate ?? null,
+              name: txn.name,
+              merchantName: txn.merchant ?? null,
+              categoryPath: txn.categoryPath ?? txn.categoryHint ?? null,
+              personalFinanceCategory: txn.personalFinanceCategory ?? null,
+              merchantCategoryCode: txn.merchantCategoryCode ?? null,
+              pending: txn.pending,
+            }, category?.id ?? null);
+            if (existing) modified++; else added++;
+          }
+        };
+        await ingestRows(res.added);
+        await ingestRows(res.modified);
+
+        oldestFetched = startSeconds;
+        endSeconds = Math.max(0, startSeconds + BACKFILL_OVERLAP_DAYS * DAY_SECONDS);
+        await db.run(
+          "UPDATE provider_connections SET backfill_cursor = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+          `${BACKFILL_PREFIX}${endSeconds}`, now(), connectionId, userId,
+        );
+        if (startSeconds === 0) break;
+      }
+
+      await markLinkedTransfers(db, userId);
+      return {
+        added,
+        modified,
+        windows: count,
+        oldestFetchedDate: new Date(oldestFetched * 1000).toISOString().slice(0, 10),
+        nextBackfillBefore: new Date(endSeconds * 1000).toISOString().slice(0, 10),
+      };
     },
 
     async syncAll(userId: string): Promise<ProviderSyncResult[]> {
