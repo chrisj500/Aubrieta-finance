@@ -17,4 +17,12 @@ describe("onboarding first-run demo-first path", () => {
   it("labels the empty-account exit explicitly as Start fresh", () => {
     expect(src).toMatch(/>\s*Start fresh\s*</);
   });
+
+  it("updates the onboarding cache before returning to the dashboard", () => {
+    expect(src).toContain('queryClient.setQueryData(["onboarding"], completed)');
+  });
+
+  it("uses a full navigation after switching to the demo session", () => {
+    expect(src).toContain('window.location.assign("/dashboard")');
+  });
 });
