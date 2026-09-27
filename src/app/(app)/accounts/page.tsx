@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePageTitle } from "@/lib/use-page-title";
 import { useEscapeToClose } from "@/lib/use-escape-to-close";
 import { useDialogA11y } from "@/lib/use-dialog-a11y";
@@ -9,7 +9,7 @@ import Link from "next/link";
 import NextImage from "next/image";
 import {
   CreditCard, Landmark, PiggyBank, TrendingUp, Wallet, CircleHelp, X, ChevronDown,
-  RotateCcw, ALargeSmall, DollarSign, CalendarClock, ArrowUp, ArrowDown, Check, Trash2, Pencil,
+  RotateCcw, ALargeSmall, DollarSign, CalendarClock, ArrowUp, ArrowDown, Check, Trash2, Pencil, ImageUp,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { accountDetailHref } from "@/lib/account-detail-href";
@@ -26,10 +26,18 @@ import { useIncludePending } from "@/lib/pending-pref";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { FloatingAddButton } from "@/components/ui/floating-add-button";
 import { sortInstitutionGroups } from "@/lib/account-group-sort";
+import { IconUploadDropzone } from "@/components/icon-upload-dropzone";
 
 interface InstitutionIcon {
   institutionKey: string;
   institutionName: string;
+  dataUrl: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+interface AccountIcon {
+  accountId: string;
   dataUrl: string;
   mimeType: string;
   sizeBytes: number;
@@ -104,46 +112,6 @@ function typeIcon(type: string | null) {
   return (type && TYPE_ICONS[type]) || CircleHelp;
 }
 
-async function prepareInstitutionIcon(file: File): Promise<string> {
-  const allowed = new Set(["image/png", "image/jpeg", "image/webp"]);
-  if (!allowed.has(file.type)) throw new Error("Choose a PNG, JPEG, or WebP image.");
-  if (file.size > 8 * 1024 * 1024) throw new Error("Choose an image smaller than 8 MB.");
-
-  const sourceDataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("That image could not be read."));
-    reader.readAsDataURL(file);
-  });
-  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("That image could not be read."));
-    img.src = sourceDataUrl;
-  });
-  const size = 160;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Image resizing is unavailable in this browser.");
-  ctx.clearRect(0, 0, size, size);
-  const scale = Math.min(size / image.naturalWidth, size / image.naturalHeight);
-  const width = Math.max(1, Math.round(image.naturalWidth * scale));
-  const height = Math.max(1, Math.round(image.naturalHeight * scale));
-  ctx.drawImage(image, Math.round((size - width) / 2), Math.round((size - height) / 2), width, height);
-
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.9));
-  const output = blob ?? await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!output) throw new Error("That image could not be prepared.");
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("That image could not be read."));
-    reader.readAsDataURL(output);
-  });
-}
-
 function AccountsSkeleton() {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" role="status" aria-busy="true" aria-label="Loading your accounts">
@@ -166,6 +134,11 @@ export default function AccountsPage() {
   const institutionIcons = useQuery({
     queryKey: ["institution-icons"],
     queryFn: () => api.get<{ icons: InstitutionIcon[] }>("/api/institution-icons"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const accountIcons = useQuery({
+    queryKey: ["account-icons"],
+    queryFn: () => api.get<{ icons: AccountIcon[] }>("/api/account-icons"),
     staleTime: 5 * 60 * 1000,
   });
   const cardProducts = useQuery({
@@ -220,7 +193,10 @@ export default function AccountsPage() {
   const [institutionIconPreview, setInstitutionIconPreview] = useState<string | null>(null);
   const [institutionIconError, setInstitutionIconError] = useState<string | null>(null);
   const [institutionIconPreparing, setInstitutionIconPreparing] = useState(false);
-  const institutionIconFileRef = useRef<HTMLInputElement>(null);
+  const [editingAccountArtwork, setEditingAccountArtwork] = useState<Account | null>(null);
+  const [accountArtworkPreview, setAccountArtworkPreview] = useState<string | null>(null);
+  const [accountArtworkError, setAccountArtworkError] = useState<string | null>(null);
+  const [accountArtworkPreparing, setAccountArtworkPreparing] = useState(false);
   useEscapeToClose(() => { if (!updateAccountMeta.isPending) setEditingAccount(null); }, editingAccount !== null);
   const editDialogA11yRef = useDialogA11y(editingAccount !== null, () => {
     if (!updateAccountMeta.isPending) setEditingAccount(null);
@@ -234,6 +210,12 @@ export default function AccountsPage() {
   }, editingInstitutionIcon !== null);
   const institutionIconDialogA11yRef = useDialogA11y(editingInstitutionIcon !== null, () => {
     if (!saveInstitutionIcon.isPending && !removeInstitutionIcon.isPending && !institutionIconPreparing) setEditingInstitutionIcon(null);
+  });
+  useEscapeToClose(() => {
+    if (!saveAccountArtwork.isPending && !removeAccountArtwork.isPending && !accountArtworkPreparing) setEditingAccountArtwork(null);
+  }, editingAccountArtwork !== null);
+  const accountArtworkDialogA11yRef = useDialogA11y(editingAccountArtwork !== null, () => {
+    if (!saveAccountArtwork.isPending && !removeAccountArtwork.isPending && !accountArtworkPreparing) setEditingAccountArtwork(null);
   });
 
   const invalidate = () => {
@@ -363,6 +345,37 @@ export default function AccountsPage() {
     onError: (e) => setInstitutionIconError(e instanceof Error ? e.message : "Failed to remove institution icon."),
   });
 
+  const saveAccountArtwork = useMutation({
+    mutationFn: async () => {
+      if (!editingAccountArtwork || !accountArtworkPreview) throw new Error("Choose artwork first.");
+      return api.put<{ icon: AccountIcon }>("/api/account-icons", {
+        accountId: editingAccountArtwork.id,
+        dataUrl: accountArtworkPreview,
+      });
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setAccountArtworkError(null);
+      setEditingAccountArtwork(null);
+      qc.invalidateQueries({ queryKey: ["account-icons"] });
+    },
+    onError: (e) => setAccountArtworkError(e instanceof Error ? e.message : "Failed to save account artwork."),
+  });
+
+  const removeAccountArtwork = useMutation({
+    mutationFn: async () => {
+      if (!editingAccountArtwork) throw new Error("No account selected.");
+      return api.del(`/api/account-icons?accountId=${encodeURIComponent(editingAccountArtwork.id)}`);
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setAccountArtworkError(null);
+      setEditingAccountArtwork(null);
+      qc.invalidateQueries({ queryKey: ["account-icons"] });
+    },
+    onError: (e) => setAccountArtworkError(e instanceof Error ? e.message : "Failed to remove account artwork."),
+  });
+
   const bulkUpdate = useMutation({
     mutationFn: () =>
       api.patch<{ updated: number }>("/api/accounts/bulk", {
@@ -400,12 +413,18 @@ export default function AccountsPage() {
   }
 
   const institutionIconMap = useMemo(() => new Map((institutionIcons.data?.icons ?? []).map((icon) => [icon.institutionName, icon])), [institutionIcons.data?.icons]);
+  const accountIconMap = useMemo(() => new Map((accountIcons.data?.icons ?? []).map((icon) => [icon.accountId, icon])), [accountIcons.data?.icons]);
 
   function openInstitutionIconEditor(institutionName: string) {
     setEditingInstitutionIcon(institutionName);
     setInstitutionIconPreview(institutionIconMap.get(institutionName)?.dataUrl ?? null);
     setInstitutionIconError(null);
-    if (institutionIconFileRef.current) institutionIconFileRef.current.value = "";
+  }
+
+  function openAccountArtworkEditor(account: Account) {
+    setEditingAccountArtwork(account);
+    setAccountArtworkPreview(accountIconMap.get(account.id)?.dataUrl ?? null);
+    setAccountArtworkError(null);
   }
 
   const visibleAccounts = useMemo(() => {
@@ -613,53 +632,59 @@ export default function AccountsPage() {
             const earliestDue = group.accounts.map((account) => account.next_payment_due_date).filter(Boolean).sort()[0] ?? null;
 
             return (
-              <section key={group.name} className="relative overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
-                <button
-                  type="button"
-                  aria-expanded={expanded}
-                  onClick={() => toggleGroup(group.name)}
-                  className="grid w-full gap-3 px-4 py-4 text-left transition-colors hover:bg-surface-muted/35 md:grid-cols-[minmax(12rem,1.4fr)_minmax(9rem,0.8fr)_minmax(9rem,0.8fr)_auto] md:items-center md:px-5"
-                >
-                  <span className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-muted text-text-muted" aria-hidden>
-                      {customInstitutionIcon ? <NextImage src={customInstitutionIcon.dataUrl} alt="" width={40} height={40} unoptimized className="h-full w-full object-contain" /> : <Landmark size={19} />}
+              <section key={group.name} className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+                <div className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(14rem,1.3fr)_minmax(16rem,1fr)_minmax(9rem,0.65fr)_auto] md:items-center md:px-5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-muted text-text-muted" aria-hidden>
+                      {customInstitutionIcon ? <NextImage src={customInstitutionIcon.dataUrl} alt="" width={44} height={44} unoptimized className="h-full w-full object-contain" /> : <Landmark size={20} />}
                     </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-base font-semibold text-text">{group.name}</span>
-                      <span className="mt-0.5 block text-xs text-text-muted">
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-base font-semibold text-text">{group.name}</span>
+                        <button
+                          type="button"
+                          aria-label={`Edit ${group.name} icon`}
+                          title={`Change ${group.name} icon`}
+                          onClick={() => openInstitutionIconEditor(group.name)}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-accent-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                        >
+                          <Pencil size={13} aria-hidden />
+                        </button>
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-text-muted">
                         {group.accounts.length} account{group.accounts.length === 1 ? "" : "s"}
                         {typeCounts.map((entry) => ` · ${entry.count} ${TYPE_LABELS[entry.type]}`).join("")}
-                      </span>
-                    </span>
-                  </span>
+                      </p>
+                    </div>
+                  </div>
 
-                  <span className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs md:block">
-                    <span className="block text-text-muted">Assets</span>
-                    <span className="money block text-sm font-semibold text-text"><Money cents={assetCents} /></span>
-                    <span className="mt-1 block text-text-muted md:mt-2">Owed</span>
-                    <span className={`money block text-sm font-semibold ${owedCents ? "text-danger" : "text-text"}`}><Money cents={owedCents} /></span>
-                  </span>
+                  <div className="grid grid-cols-2 gap-5 sm:max-w-md md:max-w-none">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium uppercase tracking-wide text-text-muted">Assets</p>
+                      <p className="money mt-0.5 truncate text-xl font-semibold text-text md:text-2xl"><Money cents={assetCents} /></p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium uppercase tracking-wide text-text-muted">Owed</p>
+                      <p className={`money mt-0.5 truncate text-xl font-semibold md:text-2xl ${owedCents ? "text-danger" : "text-text"}`}><Money cents={owedCents} /></p>
+                    </div>
+                  </div>
 
-                  <span className="text-xs text-text-muted">
+                  <div className="text-xs text-text-muted">
                     <span className="block">{privateCount} Private{householdCount ? ` · ${householdCount} Household` : ""}</span>
                     {includePending && pendingCents !== 0 && <span className={`mt-1 block ${pendingCents < 0 ? "text-warning" : "text-success"}`}><Money cents={pendingCents} signed /> pending</span>}
                     {earliestDue && <span className="mt-1 block">Next due {new Date(`${earliestDue}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
-                  </span>
+                  </div>
 
-                  <span className="flex items-center justify-end gap-2 text-xs font-medium text-accent-text">
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => toggleGroup(group.name)}
+                    className="flex items-center justify-end gap-2 rounded-lg px-2 py-2 text-xs font-medium text-accent-text transition-colors hover:bg-surface-muted/50"
+                  >
                     {expanded ? "Hide accounts" : "Show accounts"}
                     <ChevronDown size={17} className={`text-text-muted transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden />
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Edit ${group.name} icon`}
-                  title={`Change ${group.name} icon`}
-                  onClick={() => openInstitutionIconEditor(group.name)}
-                  className="absolute left-11 top-11 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface text-text-muted shadow-sm transition-colors hover:text-accent-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-                >
-                  <Pencil size={11} aria-hidden />
-                </button>
+                  </button>
+                </div>
 
                 {expanded && (
                   <div className="border-t border-border">
@@ -686,6 +711,7 @@ export default function AccountsPage() {
                         const Icon = typeIcon(account.type);
                         const selected = selectedIds.includes(account.id);
                         const balanceCents = groupBalance(account);
+                        const customAccountIcon = accountIconMap.get(account.id);
                         return (
                           <div key={account.id} className="grid gap-3 px-4 py-3 md:grid-cols-[auto_minmax(0,1fr)_9rem_8rem_7rem_auto] md:items-center md:px-5">
                             <div className="flex items-center gap-3">
@@ -694,7 +720,11 @@ export default function AccountsPage() {
                                   {selected && <Check size={12} aria-hidden />}
                                 </button>
                               ) : <span className="h-5 w-5 shrink-0" />}
-                              {account.type === "credit" && account.card_identity ? (
+                              {customAccountIcon ? (
+                                <span className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-surface-muted ring-1 ring-border">
+                                  <NextImage src={customAccountIcon.dataUrl} alt="" width={64} height={40} unoptimized className="h-full w-full object-contain" />
+                                </span>
+                              ) : account.type === "credit" && account.card_identity ? (
                                 account.is_owner ? (
                                   <button
                                     type="button"
@@ -737,6 +767,17 @@ export default function AccountsPage() {
                             </div>
 
                             <div className="flex items-center justify-end gap-1">
+                              {account.is_owner && (
+                                <button
+                                  type="button"
+                                  aria-label={`Edit artwork for ${account.name}`}
+                                  title="Change account artwork"
+                                  onClick={() => openAccountArtworkEditor(account)}
+                                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-accent-text"
+                                >
+                                  <ImageUp size={13} aria-hidden />
+                                </button>
+                              )}
                               {account.is_owner && (
                                 <button
                                   type="button"
@@ -824,8 +865,8 @@ export default function AccountsPage() {
             role="dialog"
             aria-modal="true"
             aria-label={`Edit ${editingInstitutionIcon} icon`}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-2xl"
           >
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
@@ -835,32 +876,16 @@ export default function AccountsPage() {
               <button aria-label="Close institution icon editor" onClick={() => !saveInstitutionIcon.isPending && !removeInstitutionIcon.isPending && !institutionIconPreparing && setEditingInstitutionIcon(null)} className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface-muted hover:text-text"><X size={17} /></button>
             </div>
 
-            <div className="flex items-center gap-4 rounded-xl border border-border bg-surface-muted/30 p-4">
-              <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-muted text-text-muted ring-1 ring-border">
-                {institutionIconPreview ? <NextImage src={institutionIconPreview} alt="Icon preview" width={80} height={80} unoptimized className="h-full w-full object-contain" /> : <Landmark size={32} aria-hidden />}
-              </div>
-              <div className="min-w-0 flex-1">
-                <input
-                  ref={institutionIconFileRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  className="sr-only"
-                  onChange={async (event) => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    setInstitutionIconPreparing(true);
-                    setInstitutionIconError(null);
-                    try { setInstitutionIconPreview(await prepareInstitutionIcon(file)); }
-                    catch (e) { setInstitutionIconError(e instanceof Error ? e.message : "That image could not be prepared."); }
-                    finally { setInstitutionIconPreparing(false); }
-                  }}
-                />
-                <Button type="button" variant="secondary" size="sm" disabled={institutionIconPreparing || saveInstitutionIcon.isPending || removeInstitutionIcon.isPending} onClick={() => institutionIconFileRef.current?.click()}>
-                  {institutionIconPreparing ? "Preparing…" : institutionIconPreview ? "Choose another image" : "Choose image"}
-                </Button>
-                <p className="mt-2 text-xs text-text-muted">PNG, JPEG, or WebP. Aubrieta resizes it to a small square icon before saving.</p>
-              </div>
-            </div>
+            <IconUploadDropzone
+              preview={institutionIconPreview}
+              shape="square"
+              fallback={<Landmark size={32} aria-hidden />}
+              disabled={saveInstitutionIcon.isPending || removeInstitutionIcon.isPending}
+              onPrepared={setInstitutionIconPreview}
+              onError={setInstitutionIconError}
+              onPreparingChange={setInstitutionIconPreparing}
+            />
+            <p className="mt-2 text-xs text-text-muted">Aubrieta resizes institution artwork to a square icon before saving.</p>
 
             {institutionIconError && <p role="alert" className="mt-3 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-xs text-danger">{institutionIconError}</p>}
 
@@ -876,6 +901,59 @@ export default function AccountsPage() {
                 <Button type="button" variant="secondary" disabled={saveInstitutionIcon.isPending || removeInstitutionIcon.isPending || institutionIconPreparing} onClick={() => setEditingInstitutionIcon(null)}>Cancel</Button>
                 <Button type="button" disabled={!institutionIconPreview || saveInstitutionIcon.isPending || removeInstitutionIcon.isPending || institutionIconPreparing} onClick={() => saveInstitutionIcon.mutate()}>
                   {saveInstitutionIcon.isPending ? "Saving…" : "Save icon"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingAccountArtwork && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => !saveAccountArtwork.isPending && !removeAccountArtwork.isPending && !accountArtworkPreparing && setEditingAccountArtwork(null)}
+        >
+          <div
+            ref={accountArtworkDialogA11yRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Edit artwork for ${editingAccountArtwork.name}`}
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <CardTitle>Account artwork</CardTitle>
+                <p className="mt-1 text-xs text-text-muted">{editingAccountArtwork.name}</p>
+              </div>
+              <button aria-label="Close account artwork editor" onClick={() => !saveAccountArtwork.isPending && !removeAccountArtwork.isPending && !accountArtworkPreparing && setEditingAccountArtwork(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-muted hover:text-text"><X size={17} /></button>
+            </div>
+
+            <IconUploadDropzone
+              preview={accountArtworkPreview}
+              shape="card"
+              fallback={<CreditCard size={34} aria-hidden />}
+              disabled={saveAccountArtwork.isPending || removeAccountArtwork.isPending}
+              onPrepared={setAccountArtworkPreview}
+              onError={setAccountArtworkError}
+              onPreparingChange={setAccountArtworkPreparing}
+            />
+            <p className="mt-2 text-xs text-text-muted">Card artwork is stored separately from card identity, so replacing the image does not change provider or product metadata.</p>
+
+            {accountArtworkError && <p role="alert" className="mt-3 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-xs text-danger">{accountArtworkError}</p>}
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                {accountIconMap.has(editingAccountArtwork.id) && (
+                  <Button type="button" variant="secondary" size="sm" disabled={removeAccountArtwork.isPending || saveAccountArtwork.isPending || accountArtworkPreparing} onClick={() => removeAccountArtwork.mutate()}>
+                    {removeAccountArtwork.isPending ? "Removing…" : "Use default artwork"}
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" disabled={saveAccountArtwork.isPending || removeAccountArtwork.isPending || accountArtworkPreparing} onClick={() => setEditingAccountArtwork(null)}>Cancel</Button>
+                <Button type="button" disabled={!accountArtworkPreview || saveAccountArtwork.isPending || removeAccountArtwork.isPending || accountArtworkPreparing} onClick={() => saveAccountArtwork.mutate()}>
+                  {saveAccountArtwork.isPending ? "Saving…" : "Save artwork"}
                 </Button>
               </div>
             </div>
