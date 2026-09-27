@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import {
   CreditCard, Landmark, PiggyBank, TrendingUp, Wallet, CircleHelp, X, ChevronDown,
-  RotateCcw, ALargeSmall, DollarSign, CalendarClock, ArrowUp, ArrowDown, Check, Trash2,
+  RotateCcw, ALargeSmall, DollarSign, CalendarClock, ArrowUp, ArrowDown, Check, Trash2, Pencil,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { accountDetailHref } from "@/lib/account-detail-href";
@@ -146,6 +146,13 @@ export default function AccountsPage() {
   const [bulkType, setBulkType] = useState("");
   const [bulkVisibility, setBulkVisibility] = useState("");
   const [bulkNetWorth, setBulkNetWorth] = useState("");
+  const [editingAccount, setEditingAccount] = useState<{ id: string; name: string; description: string } | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  useEscapeToClose(() => { if (!updateAccountMeta.isPending) setEditingAccount(null); }, editingAccount !== null);
+  const editDialogA11yRef = useDialogA11y(editingAccount !== null, () => {
+    if (!updateAccountMeta.isPending) setEditingAccount(null);
+  });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["accounts"] });
@@ -192,6 +199,19 @@ export default function AccountsPage() {
       qc.invalidateQueries({ queryKey: ["accounts", "deleted"] });
     },
     onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to restore account."),
+  });
+
+  const updateAccountMeta = useMutation({
+    mutationFn: async ({ id, name, description }: { id: string; name: string; description: string }) => {
+      await api.patch(`/api/accounts/${id}`, { name });
+      await api.patch(`/api/accounts/${id}`, { description: description.trim() || null });
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setEditingAccount(null);
+      invalidate();
+    },
+    onError: (e) => setActionError(e instanceof Error ? e.message : "Failed to update account details."),
   });
 
   const bulkUpdate = useMutation({
@@ -401,7 +421,11 @@ export default function AccountsPage() {
       ) : institutionGroups.length === 0 ? (
         <Card>
           <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center">
-            <p className="text-sm text-text-muted">No accounts match this filter.</p>
+            <p className="text-sm text-text-muted">
+              {data.accounts.length === 0
+                ? "No accounts yet — accounts hold your balances and transactions so Aubrieta can track your finances."
+                : "No accounts match this filter."}
+            </p>
             {data.accounts.length === 0 && (
               <p className="mt-1 text-sm">
                 <Link href="/data-sync" className="font-medium text-accent-text hover:underline">Connect a bank</Link>
@@ -541,6 +565,21 @@ export default function AccountsPage() {
                               {account.is_owner && (
                                 <button
                                   type="button"
+                                  aria-label={`Edit ${account.name}`}
+                                  title="Edit name or note"
+                                  onClick={() => {
+                                    setEditingAccount({ id: account.id, name: account.name, description: account.description ?? "" });
+                                    setEditName(account.name);
+                                    setEditDescription(account.description ?? "");
+                                  }}
+                                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-muted hover:text-text"
+                                >
+                                  <Pencil size={13} aria-hidden />
+                                </button>
+                              )}
+                              {account.is_owner && (
+                                <button
+                                  type="button"
                                   aria-label={`Remove ${account.name}`}
                                   title="Remove account"
                                   onClick={() => removeAccount(account)}
@@ -598,6 +637,48 @@ export default function AccountsPage() {
             ))}
           </ul>
         </Card>
+      )}
+
+      {editingAccount && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => !updateAccountMeta.isPending && setEditingAccount(null)}
+        >
+          <div
+            ref={editDialogA11yRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Edit ${editingAccount.name}`}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <CardTitle>Edit account</CardTitle>
+              <button aria-label="Close account editor" onClick={() => !updateAccountMeta.isPending && setEditingAccount(null)} className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface-muted hover:text-text"><X size={17} /></button>
+            </div>
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!editName.trim()) return;
+                updateAccountMeta.mutate({ id: editingAccount.id, name: editName.trim(), description: editDescription });
+              }}
+            >
+              <div>
+                <label htmlFor="edit-account-name" className="mb-1 block text-xs font-medium text-text-muted">Name</label>
+                <Input id="edit-account-name" value={editName} onChange={(e) => setEditName(e.target.value)} maxLength={100} required autoFocus />
+              </div>
+              <div>
+                <label htmlFor="edit-account-note" className="mb-1 block text-xs font-medium text-text-muted">Note</label>
+                <Input id="edit-account-note" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} maxLength={300} placeholder="Optional note about this account" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="secondary" disabled={updateAccountMeta.isPending} onClick={() => setEditingAccount(null)}>Cancel</Button>
+                <Button type="submit" disabled={updateAccountMeta.isPending || !editName.trim()}>{updateAccountMeta.isPending ? "Saving…" : "Save"}</Button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Add-account modal */}
