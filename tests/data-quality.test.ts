@@ -9,7 +9,7 @@ describe("data-quality audit", () => {
     const now = new Date().toISOString();
     const a = await seedManualAccount(db, user.id, "Chase Sapphire Preferred (1234)", "credit");
     const b = await seedManualAccount(db, user.id, "Mystery Card", "credit");
-    const c = await seedManualAccount(db, user.id, "Duplicate Card", "credit");
+    const c = await seedManualAccount(db, user.id, "Chase Sapphire Preferred (1234)", "credit");
     const embeddedMask = await seedManualAccount(db, user.id, "Named Card (5555)", "credit");
     await seedManualAccount(db, user.id, "Unknown Credit Union Card", "credit");
     await db.run("UPDATE accounts SET mask = '1234' WHERE id IN (?, ?)", a, c);
