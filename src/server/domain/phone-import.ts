@@ -133,9 +133,11 @@ export function createPhoneImportService(db: Db) {
           : null;
         const id = existing?.id ?? randomUUID();
         if (!existing) {
+          const sourceVisibility = text(row, "visibility");
+          const visibility = sourceVisibility === "shared" || sourceVisibility === "private" ? sourceVisibility : "private";
           await db.run(
-            "INSERT INTO accounts (id, user_id, household_id, owner_user_id, visibility, item_id, plaid_account_id, name, official_name, type, subtype, mask, current_balance_cents, available_balance_cents, currency, created_at) VALUES (?, ?, ?, ?, 'shared', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            id, userId, householdId, userId, itemMap.get(text(row, "item_id") ?? "") ?? null, plaidId, text(row, "name") ?? "Imported account", text(row, "official_name"), text(row, "type"), text(row, "subtype"), text(row, "mask"), integer(row, "current_balance_cents"), integer(row, "available_balance_cents"), text(row, "currency") ?? "USD", text(row, "created_at") ?? new Date().toISOString()
+            "INSERT INTO accounts (id, user_id, household_id, owner_user_id, visibility, item_id, plaid_account_id, name, official_name, type, subtype, mask, current_balance_cents, available_balance_cents, currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            id, userId, householdId, userId, visibility, itemMap.get(text(row, "item_id") ?? "") ?? null, plaidId, text(row, "name") ?? "Imported account", text(row, "official_name"), text(row, "type"), text(row, "subtype"), text(row, "mask"), integer(row, "current_balance_cents"), integer(row, "available_balance_cents"), text(row, "currency") ?? "USD", text(row, "created_at") ?? new Date().toISOString()
           );
           imported.accounts++;
         }

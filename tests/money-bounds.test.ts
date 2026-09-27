@@ -54,6 +54,13 @@ describe("money magnitude bounds", () => {
     expect(rows).toHaveLength(0);
   });
 
+  it("accounts.createManual defaults new accounts to private", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "account-private-default");
+    const account = await createAccountsService(db).createManual(user.id, { name: "Private by default", type: "credit" });
+    expect(account.visibility).toBe("private");
+  });
+
   it("accounts.createManual accepts a normal balance", async () => {
     const db = createTestDb();
     const user = await seedUser(db, "bob");

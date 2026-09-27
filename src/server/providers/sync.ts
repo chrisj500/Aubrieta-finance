@@ -113,7 +113,7 @@ export async function syncProviderConnection(
            item_id, plaid_account_id, name, official_name, type,
            subtype, mask, current_balance_cents, available_balance_cents,
            currency, created_at
-         ) VALUES (?, ?, ?, ?, 'shared', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, 'private', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         accountId,
         input.userId,
         household?.householdId ?? null,

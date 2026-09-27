@@ -79,11 +79,13 @@ describe("provider-neutral sync", () => {
       current_balance_cents: number;
       available_balance_cents: number;
       plaid_account_id: string | null;
-    }>("SELECT id, current_balance_cents, available_balance_cents, plaid_account_id FROM accounts WHERE user_id = ?", user.id);
+      visibility: string;
+    }>("SELECT id, current_balance_cents, available_balance_cents, plaid_account_id, visibility FROM accounts WHERE user_id = ?", user.id);
     expect(account).toMatchObject({
       current_balance_cents: 100_000,
       available_balance_cents: 95_000,
       plaid_account_id: null,
+      visibility: "private",
     });
 
     const ref = await db.get<{ provider: string; external_account_id: string }>(

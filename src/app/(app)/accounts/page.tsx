@@ -103,7 +103,7 @@ export default function AccountsPage() {
 
   const [name, setName] = useState("");
   const [type, setType] = useState("depository");
-  const [visibility, setVisibility] = useState<"shared" | "private">("shared");
+  const [visibility, setVisibility] = useState<"shared" | "private">("private");
   const [balance, setBalance] = useState("");
   const [error, setError] = useState<string | null>(null);
   const balanceNum = balance.trim() === "" ? null : Number(balance);

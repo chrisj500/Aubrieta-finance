@@ -74,7 +74,7 @@ export function createPlaidService(db: Db = getDb(), clientFactory: (creds: Plai
         `INSERT INTO accounts (id, user_id, household_id, owner_user_id, visibility,
                                item_id, plaid_account_id, name, official_name, type, subtype, mask,
                                current_balance_cents, available_balance_cents, currency, created_at)
-         VALUES (?, ?, ?, ?, 'shared', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, 'private', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(plaid_account_id) DO UPDATE SET
            item_id = excluded.item_id,
            name = CASE WHEN accounts.name_override IS NULL THEN excluded.name ELSE accounts.name END,

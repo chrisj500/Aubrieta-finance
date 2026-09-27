@@ -223,7 +223,7 @@ export function createAccountsService(db: Db = getDb()) {
         userId,
         household?.householdId ?? null,
         userId,
-        input.visibility ?? "shared",
+        input.visibility ?? "private",
         name,
         type,
         input.subtype?.trim().slice(0, 50) || null,
