@@ -19,6 +19,7 @@ const APP_SHELL_PATHS = [
   "/plan",
   "/reports",
   "/agents",
+  "/data-sync",
   "/settings",
 ];
 
