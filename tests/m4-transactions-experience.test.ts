@@ -11,12 +11,14 @@ describe("M4.2 Transactions experience", () => {
     expect(src).toContain('description="Search, review, and organize activity across every account."');
   });
 
-  it("keeps everyday controls ahead of maintenance/history tools", () => {
+  it("keeps Transactions focused on everyday transaction work", () => {
     expect(src).toContain('aria-label="Search transactions"');
-    expect(src).toContain('History tools');
-    expect(src.indexOf('aria-label="Search transactions"')).toBeLessThan(src.indexOf('History tools'));
-    expect(src.indexOf('History tools')).toBeLessThan(src.lastIndexOf('Pull full history'));
-    expect(src.indexOf('History tools')).toBeLessThan(src.lastIndexOf('Import CSV'));
+    expect(src).toContain('aria-label="Sort transactions"');
+    expect(src).not.toContain('History tools');
+    expect(src).not.toContain('Pull full history');
+    expect(src).not.toContain('Import CSV');
+    expect(src).toContain('Go to Data & Sync and tap “Reconnect”');
+    expect(src).toContain('href="/data-sync#csv-import"');
   });
 
   it("offers a single reusable clear-filter action for active filters and empty results", () => {
