@@ -52,4 +52,16 @@ describe("institution-first Accounts experience", () => {
     expect(page).toContain("Reset to automatic");
     expect(page).not.toContain("identity.confidence");
   });
+  it("routes institution groups through the same global sort state", () => {
+    expect(page).toContain('sortInstitutionGroups(rows, sortBy, sortDir, includePending)');
+  });
+
+  it("lets users replace the institution group icon with their own image", () => {
+    expect(page).toContain('queryKey: ["institution-icons"]');
+    expect(page).toContain('aria-label={`Edit ${group.name} icon`}');
+    expect(page).toContain('accept="image/png,image/jpeg,image/webp"');
+    expect(page).toContain('Save icon');
+    expect(page).toContain('Use default icon');
+  });
+
 });
