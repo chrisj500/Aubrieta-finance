@@ -1043,35 +1043,33 @@ export default function TransactionsPage() {
                       />
                     </div>
 
-                    <label
-                      className={`col-start-2 row-start-2 flex h-10 cursor-pointer select-none items-center justify-self-end gap-2 rounded-xl border px-3 text-xs font-medium transition-colors md:col-start-3 md:row-start-1 ${
+                    <button
+                      type="button"
+                      aria-pressed={t.exclude_from_budgets === 1}
+                      aria-label={`${t.exclude_from_budgets === 1 ? "Include" : "Exclude"} ${t.name} ${t.exclude_from_budgets === 1 ? "in" : "from"} budgets`}
+                      onClick={() => toggleExclude.mutate({ id: t.id, exclude: t.exclude_from_budgets !== 1 })}
+                      className={`col-start-2 row-start-2 flex h-10 select-none items-center justify-self-end gap-2 rounded-xl border px-3 text-xs font-medium transition-colors md:col-start-3 md:row-start-1 ${
                         t.exclude_from_budgets === 1
                           ? "border-danger bg-[var(--danger-soft)] text-danger"
-                          : "border-border bg-surface text-text-muted hover:text-text"
+                          : "border-border bg-surface text-text-muted hover:border-danger/50 hover:text-danger"
                       }`}
                     >
                       <span
                         aria-hidden="true"
-                        className={`flex h-4 w-4 items-center justify-center rounded border ${
+                        className={`flex h-4 w-4 items-center justify-center rounded-[3px] border ${
                           t.exclude_from_budgets === 1
                             ? "border-danger bg-danger text-[var(--danger-foreground)]"
                             : "border-border bg-surface"
                         }`}
                       >
                         {t.exclude_from_budgets === 1 && (
-                          <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M2 6.5L4.5 9L10 3" />
+                          <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round">
+                            <path d="M3 3L9 9M9 3L3 9" />
                           </svg>
                         )}
                       </span>
-                      <input
-                        type="checkbox"
-                        className="sr-only"
-                        checked={t.exclude_from_budgets === 1}
-                        onChange={(e) => toggleExclude.mutate({ id: t.id, exclude: e.target.checked })}
-                      />
                       Exclude
-                    </label>
+                    </button>
 
                     <div className="col-start-2 row-start-1 flex items-center justify-end gap-2 md:contents">
                       <span
