@@ -28,7 +28,7 @@ describe("M4.2 Transactions experience", () => {
   it("keeps category and exclusion inline and pins filters near the scroll edge", () => {
     expect(src).toContain('className="sticky top-2 z-20 p-3 shadow-sm sm:p-4"');
     expect(src).toContain('ariaLabel={`Category for ${t.name}`}');
-    expect(src).toContain('>\n                      Exclude\n                    </label>');
+    expect(src).toContain('>\n                      Exclude\n                    </button>');
     expect(src).toContain('routine review never requires opening details');
     expect(src).not.toContain('Exclude from budgets\n                      </label>');
   });
@@ -43,6 +43,13 @@ describe("M4.2 Transactions experience", () => {
   it("uses the semantic danger palette when a transaction is excluded", () => {
     expect(src).toContain('border-danger bg-[var(--danger-soft)] text-danger');
     expect(src).toContain('border-danger bg-danger text-[var(--danger-foreground)]');
+  });
+
+  it("renders Exclude as a destructive-intent toggle button with an X mark", () => {
+    expect(src).toContain('aria-pressed={t.exclude_from_budgets === 1}');
+    expect(src).toContain('M3 3L9 9M9 3L3 9');
+    expect(src).not.toContain('checked={t.exclude_from_budgets === 1}');
+    expect(src).toContain('hover:border-danger/50 hover:text-danger');
   });
 
 });
