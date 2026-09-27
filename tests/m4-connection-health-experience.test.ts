@@ -5,19 +5,19 @@ import { describe, expect, it } from "vitest";
 const root = join(__dirname, "..");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
 
-const settings = read("src/app/(app)/settings/page.tsx");
+const dataSync = read("src/app/(app)/data-sync/page.tsx");
+const plaid = read("src/components/plaid-settings-card.tsx");
 const card = read("src/components/connection-health-card.tsx");
 const route = read("src/app/api/connections/health/route.ts");
 const solo = read("src/lib/solo-router.ts");
 const registry = read("src/server/authz/route-registry.ts");
-const teller = read("src/components/teller-settings-card.tsx");
 const simplefin = read("src/components/simplefin-settings-card.tsx");
 const akoya = read("src/components/akoya-settings-card.tsx");
 
 describe("M4.9 Connection Health experience", () => {
   it("puts provider-neutral connection health ahead of provider setup controls", () => {
-    expect(settings).toContain("<ConnectionHealthCard setMsg={setMsg} setErr={setErr} />");
-    expect(settings.indexOf("<ConnectionHealthCard")).toBeLessThan(settings.indexOf('id="provider-plaid"'));
+    expect(dataSync).toContain("<ConnectionHealthCard setMsg={setMsg} setErr={setErr} />");
+    expect(dataSync.indexOf("<ConnectionHealthCard")).toBeLessThan(dataSync.indexOf("<PlaidSettingsCard"));
   });
 
   it("shows real recorded status, last successful sync, errors, accounts, and capabilities", () => {
@@ -49,13 +49,13 @@ describe("M4.9 Connection Health experience", () => {
     expect(solo).toContain('state: attention ? ("needs_attention" as const)');
   });
 
-  it("anchors every provider management surface and refreshes health after connection changes", () => {
-    expect(settings).toContain('id="provider-plaid"');
-    expect(teller).toContain('id="provider-teller"');
+  it("anchors active provider management surfaces and refreshes health after connection changes", () => {
+    expect(plaid).toContain('id="provider-plaid"');
     expect(simplefin).toContain('id="provider-simplefin"');
     expect(akoya).toContain('id="provider-akoya"');
-    for (const source of [settings, teller, simplefin, akoya]) {
-      expect(source).toContain('queryKey: ["connection-health"]');
+    expect(dataSync).not.toContain("TellerSettingsCard");
+    for (const source of [plaid, simplefin, akoya]) {
+      expect(source).toContain('connection-health');
     }
   });
 });

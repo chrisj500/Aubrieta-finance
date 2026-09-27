@@ -6,14 +6,15 @@ const root = join(__dirname, "..");
 const src = readFileSync(join(root, "src/app/(app)/settings/page.tsx"), "utf8");
 
 // Settings IA regroup (run 122): groups must be logically scoped and the
-// Setup tour must live with Backup & updates, not inside Data & sync.
+// Financial-data connections now live on Data & Sync; Settings keeps device/planning configuration.
 describe("settings information architecture", () => {
-  it("renames the device/data group and scopes its description", () => {
+  it("keeps only planning/device data in Settings", () => {
     expect(src).toContain(
-      '<SettingsGroup title="Data & sync" description="Pay schedule, device pairing, and phone-data import.">'
+      '<SettingsGroup title="Planning & device data" description="Pay schedule, hub pairing, and phone-data migration.">'
     );
-    // the old vague "Connections" group is gone
-    expect(src).not.toContain('<SettingsGroup title="Connections"');
+    expect(src).not.toContain('<SettingsGroup title="Data & sync"');
+    expect(src).not.toContain("ConnectionHealthCard");
+    expect(src).not.toContain("SimpleFinSettingsCard");
   });
 
   it("keeps the backup group title casing consistent and mentions the tour", () => {
@@ -23,17 +24,12 @@ describe("settings information architecture", () => {
     expect(src).not.toContain('<SettingsGroup title="Backup & Updates"');
   });
 
-  it("moves SetupTourCard out of Data & sync into Backup & updates", () => {
-    const dataSyncStart = src.indexOf('title="Data & sync"');
-    const dataSyncEnd = src.indexOf("</SettingsGroup>", dataSyncStart);
+  it("keeps SetupTourCard in Backup & updates", () => {
     const backupStart = src.indexOf('title="Backup & updates"');
     const backupEnd = src.indexOf("</SettingsGroup>", backupStart);
-    expect(dataSyncStart).toBeGreaterThan(-1);
     expect(backupStart).toBeGreaterThan(-1);
 
-    const dataSyncBlock = src.slice(dataSyncStart, dataSyncEnd);
     const backupBlock = src.slice(backupStart, backupEnd);
-    expect(dataSyncBlock).not.toContain("SetupTourCard");
     expect(backupBlock).toContain("{!solo && <SetupTourCard setErr={setErr} />}");
     // BackupPanel renders before the tour, tour before UpdatesCard
     expect(backupBlock.indexOf("<BackupPanel")).toBeLessThan(backupBlock.indexOf("SetupTourCard"));

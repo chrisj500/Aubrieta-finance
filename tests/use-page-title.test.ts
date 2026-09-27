@@ -15,6 +15,7 @@ const PAGES: Array<[string, string]> = [
   ["src/app/(app)/reports/page.tsx", "Reports"],
   ["src/app/(app)/settings/page.tsx", "Settings"],
   ["src/app/(app)/agents/page.tsx", "Agents"],
+  ["src/app/(app)/data-sync/page.tsx", "Data & Sync"],
 ];
 
 describe("usePageTitle (per-page document.title)", () => {
