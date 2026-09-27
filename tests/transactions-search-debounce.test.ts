@@ -43,6 +43,7 @@ describe("transactions search debounce", () => {
     // the input keeps its accessible name
     expect(src).toContain('aria-label="Search transactions"');
     // the results container carries the matching id
-    expect(src).toContain('<div id="tx-list" className="divide-y divide-border">');
+    expect(src).toContain('id="tx-list"');
+    expect(src).toContain('md:grid-cols-[minmax(0,1fr)_max-content_max-content_max-content_2rem]');
   });
 });
