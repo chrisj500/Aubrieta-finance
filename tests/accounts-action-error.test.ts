@@ -3,10 +3,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * Account inline-edit mutations (restore / toggleNetWorth / setTypeOverride /
- * setDescription / rename / reorder) used to have NO onError — a failed PATCH
- * (e.g. network/CSRF/validation) failed silently with zero user feedback. This
- * guard fails the build if any of those mutations loses its error surfacing.
+ * Account mutations that remain on the institution-first page must surface
+ * failures visibly. Type/privacy/net-worth updates are consolidated into one
+ * bulk mutation; name/note edits share one compact metadata editor.
  */
 const SRC = path.resolve(__dirname, "../src/app/(app)/accounts/page.tsx");
 
@@ -30,14 +29,7 @@ describe("accounts inline-edit mutations surface errors", () => {
     expect(src).toMatch(/<p role="alert"[\s\S]*text-danger">\s*\{actionError\}/);
   });
 
-  for (const name of [
-    "restore",
-    "toggleNetWorth",
-    "setTypeOverride",
-    "setDescription",
-    "rename",
-    "reorder",
-  ]) {
+  for (const name of ["restore", "bulkUpdate", "updateAccountMeta"]) {
     it(`${name} has onError -> setActionError`, () => {
       const body = mutationBody(src, name);
       expect(body).toContain("onError");

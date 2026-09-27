@@ -17,11 +17,11 @@ const solo = read("src/lib/solo-router.ts");
 
 describe("M4.8 Account Detail experience", () => {
   it("makes account names deep-link to per-account detail", () => {
-    expect(accounts).toContain("href={accountDetailHref(a.id)}");
+    expect(accounts).toContain("href={accountDetailHref(account.id)}");
     expect(href).toContain('process.env.NEXT_PUBLIC_SOLO_BUILD === "1"');
     expect(href).toContain('`/account?id=${encoded}`');
     expect(href).toContain('`/accounts/${encoded}`');
-    expect(accounts).toContain('aria-label={`Rename ${a.name}`}');
+    expect(accounts).toContain('aria-label={`Edit ${account.name}`}');
   });
 
 

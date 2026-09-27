@@ -3,6 +3,7 @@ import { apiErrors } from "@/lib/api-error";
 import { assertValidCents } from "@/server/domain/money";
 import { getDb, type Db } from "@/server/db/registry";
 import { accountReadScope, assertAccountManageable, getHouseholdContext } from "@/server/authz/household-access";
+import { nextDueDateForDay } from "@/server/domain/account-liability-overrides";
 
 export interface AccountRow {
   id: string;
@@ -36,6 +37,8 @@ export interface AccountRow {
   pending_balance_cents?: number;
   /** current_balance_cents + pending_balance_cents (sign-aware). */
   balance_with_pending_cents?: number;
+  next_payment_due_date?: string | null;
+  manual_due_day?: number | null;
 }
 
 function now(): string {
@@ -61,13 +64,17 @@ export function createAccountsService(db: Db = getDb()) {
           ) AS institution_name,
           u.is_demo,
           owner.display_name AS owner_display_name,
-          COALESCE((SELECT SUM(t.amount_cents) FROM transactions t WHERE t.account_id = a.id AND t.pending = 1 AND t.exclude_from_budgets = 0 AND t.is_transfer = 0), 0) AS pending_balance_cents
+          COALESCE((SELECT SUM(t.amount_cents) FROM transactions t WHERE t.account_id = a.id AND t.pending = 1 AND t.exclude_from_budgets = 0 AND t.is_transfer = 0), 0) AS pending_balance_cents,
+          (SELECT due_day FROM account_liability_overrides alo WHERE alo.account_id = a.id AND alo.user_id = ? LIMIT 1) AS manual_due_day,
+          (SELECT l.next_payment_due_date FROM liabilities l WHERE l.account_id = a.id AND l.user_id = ? AND l.active = 1 ORDER BY l.updated_at DESC LIMIT 1) AS next_payment_due_date
            FROM accounts a
            LEFT JOIN plaid_items i ON i.id = a.item_id
            JOIN users u ON u.id = a.user_id
            LEFT JOIN users owner ON owner.id = COALESCE(a.owner_user_id, a.user_id)
           WHERE ${scope.clause} AND a.hidden = 0 AND a.deleted_at IS NULL
           ORDER BY a.sort_order, a.type, a.name COLLATE NOCASE`,
+        userId,
+        userId,
         ...scope.params,
       );
       return rows.map((a) => ({
@@ -75,6 +82,8 @@ export function createAccountsService(db: Db = getDb()) {
         is_owner: (a.owner_user_id ?? a.user_id) === userId,
         balance_with_pending_cents:
           (a.current_balance_cents ?? 0) + (a.pending_balance_cents ?? 0),
+        next_payment_due_date:
+          a.manual_due_day != null ? nextDueDateForDay(a.manual_due_day) : a.next_payment_due_date ?? null,
       }));
     },
 
@@ -350,6 +359,43 @@ export function createAccountsService(db: Db = getDb()) {
         }
       });
       return this.get(userId, id);
+    },
+
+    async bulkUpdate(
+      userId: string,
+      ids: string[],
+      changes: {
+        type?: string;
+        visibility?: "shared" | "private";
+        includeInNetWorth?: boolean;
+      },
+    ): Promise<number> {
+      const uniqueIds = [...new Set(ids)];
+      if (uniqueIds.length === 0) return 0;
+      if (changes.type !== undefined && !(ACCOUNT_TYPES as readonly string[]).includes(changes.type)) {
+        throw apiErrors.badRequest(`Account type must be one of: ${ACCOUNT_TYPES.join(", ")}.`);
+      }
+
+      await db.transaction(async () => {
+        for (const id of uniqueIds) {
+          await assertAccountManageable(db, userId, id);
+          if (changes.type !== undefined) {
+            await db.run("UPDATE accounts SET type = ?, type_override = 1 WHERE id = ?", changes.type, id);
+          }
+          if (changes.visibility !== undefined) {
+            await db.run("UPDATE accounts SET visibility = ? WHERE id = ?", changes.visibility, id);
+            if (changes.visibility === "private") {
+              await db.run("UPDATE bills SET visibility = 'private' WHERE account_id = ?", id);
+              await db.run("UPDATE goals SET visibility = 'private' WHERE account_id = ?", id);
+              await db.run("UPDATE debts SET visibility = 'private' WHERE account_id = ?", id);
+            }
+          }
+          if (changes.includeInNetWorth !== undefined) {
+            await db.run("UPDATE accounts SET include_in_net_worth = ? WHERE id = ?", changes.includeInNetWorth ? 1 : 0, id);
+          }
+        }
+      });
+      return uniqueIds.length;
     },
 
     /** Include/exclude an account from the day-to-day net worth (P24). */
