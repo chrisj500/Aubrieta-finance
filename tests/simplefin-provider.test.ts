@@ -241,7 +241,10 @@ describe("SimpleFIN provider", () => {
         accounts: [
           { id: "a1", conn_id: "conn-1", name: "Chase Sapphire Preferred (7781)", balance: "-12.11", "available-balance": "5000" },
           { id: "a2", conn_id: "conn-1", name: "Freedom Unlimited (2291)", balance: "0", "available-balance": "5000" },
-          { id: "a3", conn_id: "conn-1", name: "C. JACKSON (0769)", balance: "0", "available-balance": "0" },
+          {
+            id: "a3", conn_id: "conn-1", name: "C. JACKSON (0769)", balance: "0", "available-balance": "0",
+            transactions: [{ id: "p1", posted: 1790035200, amount: "41.84", description: "Payment Thank You - Web", payee: "Payment", pending: false }],
+          },
           { id: "a4", conn_id: "conn-1", name: "General Operations (2217)", balance: "2.17", "available-balance": "2.17" },
         ],
       }),
@@ -249,6 +252,11 @@ describe("SimpleFIN provider", () => {
     const accounts = await provider.listAccounts({ accessUrl: ACCESS_URL, remoteConnectionId: "conn-1", scopeKey: "scope-1" });
     expect(accounts.find((a) => a.name === "C. JACKSON (0769)")?.type).toBe("credit_card");
     expect(accounts.find((a) => a.name === "General Operations (2217)")?.type).toBe("other");
+    const synced = await provider.syncTransactions!(
+      { accessUrl: ACCESS_URL, remoteConnectionId: "conn-1", scopeKey: "scope-1" },
+      { value: null },
+    );
+    expect(synced.added.find((t) => t.externalId.includes(":p1"))?.isTransfer).toBe(true);
   });
 
   it("infers common account types and fails closed on unknown names", () => {
