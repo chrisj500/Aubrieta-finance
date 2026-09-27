@@ -39,6 +39,7 @@ import { seedSoloDemo } from "@/lib/solo-demo-seed";
 import { createOnboardingService } from "@/server/domain/onboarding";
 import { createCustomViewsService, WIDGET_TABS } from "@/server/domain/custom-views";
 import { createInstitutionIconService } from "@/server/domain/institution-icons";
+import { createAccountIconService } from "@/server/domain/account-icons";
 import { capScopes, createAgentPrefsService, type AgentTab } from "@/server/domain/agent-prefs";
 import { authorizeSoloRemoteRequest } from "@/server/authz/solo-remote-policy";
 
@@ -144,6 +145,7 @@ async function handlers(db: Db) {
   const onboarding = createOnboardingService(db);
   const customViews = createCustomViewsService(db);
   const institutionIcons = createInstitutionIconService(db);
+  const accountIcons = createAccountIconService(db);
 
   async function deviceUserId(): Promise<string> {
     const user = await solo.getDeviceUser();
@@ -166,6 +168,7 @@ async function handlers(db: Db) {
     onboarding,
     customViews,
     institutionIcons,
+    accountIcons,
     deviceUserId,
   };
 }
@@ -427,6 +430,25 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
       const userId = await h.deviceUserId();
       const institutionName = query.get("institutionName") ?? "";
       await h.institutionIcons.remove(userId, institutionName);
+      return { status: 204, data: null };
+    }
+
+
+    // ── Account artwork ────────────────────────────────────────────────
+    if (method === "GET" && path === "/api/account-icons") {
+      const userId = await h.deviceUserId();
+      return ok({ icons: await h.accountIcons.list(userId) });
+    }
+    if (method === "PUT" && path === "/api/account-icons") {
+      const userId = await h.deviceUserId();
+      const accountId = typeof B?.accountId === "string" ? B.accountId : "";
+      const dataUrl = typeof B?.dataUrl === "string" ? B.dataUrl : "";
+      return ok({ icon: await h.accountIcons.set(userId, accountId, dataUrl) });
+    }
+    if (method === "DELETE" && path === "/api/account-icons") {
+      const userId = await h.deviceUserId();
+      const accountId = query.get("accountId") ?? "";
+      await h.accountIcons.remove(userId, accountId);
       return { status: 204, data: null };
     }
 
