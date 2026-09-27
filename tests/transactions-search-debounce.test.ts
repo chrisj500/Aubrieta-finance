@@ -46,4 +46,13 @@ describe("transactions search debounce", () => {
     expect(src).toContain('id="tx-list"');
     expect(src).toContain('md:grid-cols-[minmax(0,1fr)_max-content_max-content_max-content_2rem]');
   });
+  it("hydrates report drill-down filters from the transaction URL", () => {
+    const src = read("src/app/(app)/transactions/page.tsx");
+    expect(src).toContain('url.get("categoryId")');
+    expect(src).toContain('url.get("uncategorized") === "1"');
+    expect(src).toContain('url.get("from")');
+    expect(src).toContain('url.get("to")');
+    expect(src).toContain('{ value: UNCATEGORIZED_FILTER, label: "Uncategorized" }');
+  });
+
 });

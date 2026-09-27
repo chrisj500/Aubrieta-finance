@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useEffect } from "react";
 import { usePageTitle } from "@/lib/use-page-title";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, ChevronLeft, ChevronRight, CircleDollarSign, Scale, TrendingDown, TrendingUp } from "lucide-react";
@@ -80,6 +81,29 @@ function refDate(offset: number): string {
   return new Date(d.getFullYear(), d.getMonth() + offset, 15).toISOString().slice(0, 10);
 }
 
+function localDateISO(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function transactionMonthRange(offset: number): { from: string; to: string } {
+  const now = new Date();
+  const from = localDateISO(new Date(now.getFullYear(), now.getMonth() + offset, 1));
+  const to = offset === 0
+    ? localDateISO(now)
+    : localDateISO(new Date(now.getFullYear(), now.getMonth() + offset + 1, 0));
+  return { from, to };
+}
+
+function categoryTransactionsHref(categoryId: string | null, from: string, to: string): string {
+  const p = new URLSearchParams({ from, to });
+  if (categoryId === null) p.set("uncategorized", "1");
+  else p.set("categoryId", categoryId);
+  return `/transactions?${p.toString()}`;
+}
+
 interface ProjectionPoint {
   month: string;
   balanceCents: number;
@@ -129,7 +153,7 @@ export default function ReportsPage() {
       const p = new URLSearchParams({ from, to });
       if (includeExcluded) p.set("includeExcluded", "1");
       if (!includePending) p.set("includePending", "0");
-      return api.get<{ rows: Array<{ categoryName: string; spentCents: number; color: string | null }> }>(
+      return api.get<{ rows: Array<{ categoryId: string | null; categoryName: string; spentCents: number; color: string | null }> }>(
         `/api/reports/spending-by-category?${p.toString()}`
       );
     },
@@ -143,7 +167,7 @@ export default function ReportsPage() {
       const p = new URLSearchParams({ from, to });
       if (includeExcluded) p.set("includeExcluded", "1");
       if (!includePending) p.set("includePending", "0");
-      return api.get<{ rows: Array<{ categoryName: string; spentCents: number; color: string | null }> }>(
+      return api.get<{ rows: Array<{ categoryId: string | null; categoryName: string; spentCents: number; color: string | null }> }>(
         `/api/reports/spending-by-category?${p.toString()}`
       );
     },
@@ -206,18 +230,33 @@ export default function ReportsPage() {
     queryFn: () => api.get<Projection>(`/api/planning/projection?months=12${includePending ? "" : "&includePending=0"}`),
   });
 
+  const transactionRange = transactionMonthRange(monthOffset);
   const pieData = (byCategory.data?.rows ?? []).map((r) => ({
     name: r.categoryName,
+    categoryId: r.categoryId,
+    href: categoryTransactionsHref(r.categoryId, transactionRange.from, transactionRange.to),
     value: r.spentCents,
   }));
 
   const previousCategoryMap = new Map((previousByCategory.data?.rows ?? []).map((r) => [r.categoryName, r.spentCents]));
   const currentCategoryMap = new Map((byCategory.data?.rows ?? []).map((r) => [r.categoryName, r.spentCents]));
+  const categoryIdByName = new Map(
+    [...(previousByCategory.data?.rows ?? []), ...(byCategory.data?.rows ?? [])]
+      .map((r) => [r.categoryName, r.categoryId] as const),
+  );
   const categoryComparison = Array.from(new Set([...currentCategoryMap.keys(), ...previousCategoryMap.keys()]))
     .map((name) => {
       const currentCents = currentCategoryMap.get(name) ?? 0;
       const previousCents = previousCategoryMap.get(name) ?? 0;
-      return { name, currentCents, previousCents, deltaCents: currentCents - previousCents };
+      const categoryId = categoryIdByName.get(name) ?? null;
+      return {
+        name,
+        categoryId,
+        href: categoryTransactionsHref(categoryId, transactionRange.from, transactionRange.to),
+        currentCents,
+        previousCents,
+        deltaCents: currentCents - previousCents,
+      };
     })
     .sort((a, b) => Math.max(b.currentCents, b.previousCents) - Math.max(a.currentCents, a.previousCents))
     .slice(0, 6);
@@ -460,7 +499,26 @@ export default function ReportsPage() {
                     type="category"
                     dataKey="name"
                     width={110}
-                    tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+                    tick={(props) => {
+                      const row = pieData.find((item) => item.name === props.payload?.value);
+                      if (!row) return <g />;
+                      return (
+                        <g transform={`translate(${Number(props.x ?? 0)},${Number(props.y ?? 0)})`}>
+                          <Link href={row.href}>
+                            <text
+                              x={-8}
+                              dy={4}
+                              textAnchor="end"
+                              fill="var(--accent-text)"
+                              fontSize={12}
+                              className="cursor-pointer underline decoration-transparent underline-offset-2 hover:decoration-current"
+                            >
+                              {row.name}
+                            </text>
+                          </Link>
+                        </g>
+                      );
+                    }}
                     tickLine={false}
                     axisLine={false}
                   />
@@ -507,7 +565,14 @@ export default function ReportsPage() {
                 <tbody>
                   {categoryComparison.map((row) => (
                     <tr key={row.name} className="border-b border-border/70 last:border-0">
-                      <td className="py-2.5 font-medium text-text">{row.name}</td>
+                      <td className="py-2.5 font-medium">
+                        <Link
+                          href={row.href}
+                          className="text-accent-text underline decoration-transparent underline-offset-2 transition-colors hover:decoration-current"
+                        >
+                          {row.name}
+                        </Link>
+                      </td>
                       <td className="py-2.5 text-right text-text"><Money cents={row.currentCents} /></td>
                       <td className="py-2.5 text-right text-text-muted"><Money cents={row.previousCents} /></td>
                       <td className={`py-2.5 text-right font-medium ${row.deltaCents > 0 ? "text-danger" : row.deltaCents < 0 ? "text-success" : "text-text-muted"}`}>

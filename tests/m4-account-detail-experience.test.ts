@@ -62,7 +62,7 @@ describe("M4.8 Account Detail experience", () => {
 
   it("deep-links All activity into the Transactions account filter", () => {
     expect(page).toContain('/transactions?accountId=${encodeURIComponent(a.id)}');
-    expect(transactions).toContain('new URLSearchParams(window.location.search).get("accountId")');
-    expect(transactions).toContain("if (fromUrl) setAccountId(fromUrl)");
+    expect(transactions).toContain('const accountFromUrl = url.get("accountId")');
+    expect(transactions).toContain("if (accountFromUrl) setAccountId(accountFromUrl);");
   });
 });

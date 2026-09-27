@@ -24,4 +24,11 @@ describe("reports spending-by-category chart honors Q28 (bar, zero baseline, dir
     expect(src).toMatch(/type="category"\s+dataKey="name"/);
     expect(src).not.toMatch(/rounded-full"\s+style=\{\{\s*background:\s*CHART_COLORS/);
   });
+  it("links category labels to filtered transactions for the selected report month", () => {
+    expect(src).toContain("categoryTransactionsHref(r.categoryId, transactionRange.from, transactionRange.to)");
+    expect(src).toContain("<Link href={row.href}>");
+    expect(src).toContain("href={row.href}");
+    expect(src).toContain('p.set("uncategorized", "1")');
+  });
+
 });

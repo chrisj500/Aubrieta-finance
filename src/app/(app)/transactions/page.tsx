@@ -44,6 +44,8 @@ interface Category {
   name: string;
 }
 
+const UNCATEGORIZED_FILTER = "__uncategorized__";
+
 function RowSkeleton() {
   return (
     <div className="space-y-1 divide-y divide-border" role="status" aria-busy="true" aria-label="Loading your transactions">
@@ -66,8 +68,16 @@ export default function TransactionsPage() {
   const [categoryId, setCategoryId] = useState("");
 
   useEffect(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get("accountId");
-    if (fromUrl) setAccountId(fromUrl);
+    const url = new URLSearchParams(window.location.search);
+    const accountFromUrl = url.get("accountId");
+    const categoryFromUrl = url.get("categoryId");
+    const fromUrl = url.get("from");
+    const toUrl = url.get("to");
+    if (accountFromUrl) setAccountId(accountFromUrl);
+    if (url.get("uncategorized") === "1") setCategoryId(UNCATEGORIZED_FILTER);
+    else if (categoryFromUrl) setCategoryId(categoryFromUrl);
+    if (fromUrl) setFrom(fromUrl);
+    if (toUrl) setTo(toUrl);
   }, []);
   const [pendingOnly, setPendingOnly] = useState(false);
   const [from, setFrom] = useState("");
@@ -115,7 +125,8 @@ export default function TransactionsPage() {
     const p = new URLSearchParams();
     if (debouncedQ.trim()) p.set("q", debouncedQ.trim());
     if (accountId) p.set("accountId", accountId);
-    if (categoryId) p.set("categoryId", categoryId);
+    if (categoryId === UNCATEGORIZED_FILTER) p.set("uncategorized", "1");
+    else if (categoryId) p.set("categoryId", categoryId);
     if (pendingOnly) p.set("pending", "1");
     if (from) p.set("from", from);
     if (to) p.set("to", to);
@@ -400,6 +411,7 @@ export default function TransactionsPage() {
     setPendingOnly(false);
     setFrom("");
     setTo("");
+    window.history.replaceState(null, "", "/transactions");
   };
 
   return (
@@ -484,7 +496,10 @@ export default function TransactionsPage() {
                 value={categoryId}
                 onChange={setCategoryId}
                 placeholder="All categories"
-                options={(categories.data?.categories ?? []).map((c) => ({ value: c.id, label: c.name }))}
+                options={[
+                  { value: UNCATEGORIZED_FILTER, label: "Uncategorized" },
+                  ...(categories.data?.categories ?? []).map((c) => ({ value: c.id, label: c.name })),
+                ]}
               />
             </div>
             <button
