@@ -29,7 +29,7 @@ import { createDeviceLockService } from "@/server/domain/device-lock";
 import { createAccountsService } from "@/server/domain/accounts";
 import { createAccountDetailService } from "@/server/domain/account-detail";
 import { createCategoriesService } from "@/server/domain/categories";
-import { createTransactionsService } from "@/server/domain/transactions";
+import { createTransactionsService, type TransactionFilters } from "@/server/domain/transactions";
 import { createBudgetsService, type BudgetFrame } from "@/server/domain/budgets";
 import { createSummaryService } from "@/server/domain/summary";
 import { createReportsService } from "@/server/domain/reports";
@@ -38,7 +38,8 @@ import { createProjectionService } from "@/server/domain/projection";
 import { seedSoloDemo } from "@/lib/solo-demo-seed";
 import { createOnboardingService } from "@/server/domain/onboarding";
 import { createCustomViewsService, WIDGET_TABS } from "@/server/domain/custom-views";
-import { createAgentPrefsService, type AgentTab } from "@/server/domain/agent-prefs";
+import { capScopes, createAgentPrefsService, type AgentTab } from "@/server/domain/agent-prefs";
+import { authorizeSoloRemoteRequest } from "@/server/authz/solo-remote-policy";
 
 export interface SoloRequest {
   method: string;
@@ -199,6 +200,7 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
     // In-app calls are authorized by the device lock instead (below).
     const authHeader = req.headers?.authorization ?? "";
     const isRemote = req.headers !== undefined;
+    let remoteScopes: string[] | null = null;
     // GET /api/agent/remote only reports status {enabled, port} (never the
     // token), so it is readable without a Bearer — useful for the in-app card
     // to poll state. All other remote requests require the bearer token.
@@ -229,7 +231,32 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
           new Date().toISOString()
         );
       }
+
+      const remoteUserId = await h.deviceUserId();
+      remoteScopes = capScopes(await createAgentPrefsService(db).get(remoteUserId));
+      const decision = authorizeSoloRemoteRequest(method, path, remoteScopes);
+      if (!decision.allowed) {
+        const insufficient = decision.code === "insufficient_scope";
+        return {
+          status: 403,
+          data: {
+            error: {
+              code: decision.code ?? "forbidden",
+              message: insufficient
+                ? `Remote agent lacks required scope: ${(decision.missing ?? []).join(", ")}.`
+                : "This route is not available to remote agents.",
+              ...(insufficient ? { missing: decision.missing ?? [] } : {}),
+            },
+          },
+        };
+      }
     }
+
+    const remoteAccountIds = async (userId: string): Promise<string[] | null> => {
+      if (remoteScopes === null) return null;
+      const accounts = await h.accounts.listForAgent(userId, remoteScopes, null);
+      return accounts.map((account) => account.id);
+    };
 
     // Device-lock enforcement at the API layer for IN-APP requests. The
     // webview UI already shows the PIN pad when locked; this closes the
@@ -384,6 +411,9 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
     // ── Accounts (manual) ───────────────────────────────────────────────
     if (method === "GET" && path === "/api/accounts") {
       const userId = await h.deviceUserId();
+      if (isRemote && remoteScopes) {
+        return ok({ accounts: await h.accounts.listForAgent(userId, remoteScopes, null) });
+      }
       const { repairAccountRows } = await import("@/server/domain/account-repair");
       await repairAccountRows(db, userId);
       if (query.get("deleted") === "1") {
@@ -396,6 +426,10 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
     if (method === "GET" && path.startsWith("/api/accounts/")) {
       const userId = await h.deviceUserId();
       const id = parseId(path, "/api/accounts/");
+      if (isRemote) {
+        const ids = await remoteAccountIds(userId);
+        if (!ids?.includes(id)) throw apiErrors.notFound("Account");
+      }
       return ok(await h.accountDetail.get(userId, id));
     }
     if (method === "PUT" && path === "/api/accounts/order") {
@@ -444,7 +478,7 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
     // ── Transactions (manual entry) ─────────────────────────────────────
     if (method === "GET" && path === "/api/transactions") {
       const userId = await h.deviceUserId();
-      const filters = {
+      const filters: TransactionFilters = {
         accountId: query.get("accountId") ?? undefined,
         from: query.get("from") ?? undefined,
         to: query.get("to") ?? undefined,
@@ -458,8 +492,19 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
         limit: Number(query.get("limit") ?? 50),
         offset: Number(query.get("offset") ?? 0),
       };
+      if (isRemote) filters.accountIds = await remoteAccountIds(userId);
       const result = await h.transactions.list(userId, filters);
       return ok(result);
+    }
+    if (method === "GET" && path.startsWith("/api/transactions/")) {
+      const userId = await h.deviceUserId();
+      const id = parseId(path, "/api/transactions/");
+      const transaction = await h.transactions.get(userId, id);
+      if (isRemote) {
+        const ids = await remoteAccountIds(userId);
+        if (!ids?.includes(transaction.account_id)) throw apiErrors.notFound("Transaction");
+      }
+      return ok({ transaction });
     }
     if (method === "POST" && path === "/api/transactions") {
       const userId = await h.deviceUserId();
@@ -1373,6 +1418,11 @@ export async function soloDispatch(req: SoloRequest): Promise<SoloResponse> {
       if (B?.excludeFromBudgets !== undefined) patch.excludeFromBudgets = B.excludeFromBudgets === true;
       if (B?.userNote !== undefined) patch.userNote = B.userNote == null ? null : String(B.userNote);
       if (Object.keys(patch).length === 0) throw apiErrors.badRequest("Nothing to update.");
+      if (isRemote) {
+        const current = await h.transactions.get(userId, id);
+        const ids = await remoteAccountIds(userId);
+        if (!ids?.includes(current.account_id)) throw apiErrors.notFound("Transaction");
+      }
       const transaction = await h.transactions.update(userId, id, patch);
       return ok({ transaction });
     }

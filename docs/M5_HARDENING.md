@@ -162,6 +162,17 @@ Closed:
 - regression coverage proves a cross-site-style cookie mutation is rejected without changing the manual and a legitimate CSRF-marked edit still succeeds
 - a source-level guard now fails tests if any API route combines `requireSession` with POST/PATCH/PUT/DELETE but omits `requireCsrf`
 
+### M5.9 — Agent scope and solo-remote isolation — high — complete
+
+Closed:
+- the solo/Tailscale bearer is now authentication only; every remote request after authentication is checked against a browser-safe, default-deny agent route policy and the user's current effective `capScopes`
+- remote agents cannot reach auth, device-lock, provider-credential, backup/update, onboarding, agent-preference, or other user-only routes; in particular they cannot widen their own AI-access settings
+- solo account and transaction reads honor `read:banking` versus `read:investments`, and transaction writes require both `transactions:edit` and visibility of the transaction's account
+- hub REST transaction list/get/edit now intersects token account allowlists with account-type scopes before returning or mutating data; moving a manual transaction to an out-of-scope account is rejected
+- MCP transaction list/search/get/uncategorized/category-write paths use the same account visibility intersection, closing direct-ID and category-write allowlist bypasses
+- account-derived aggregates now honor agent account allowlists consistently: REST/MCP budget progress, MCP reports/net worth, and REST/MCP planning projections exclude accounts outside the token boundary
+- regression coverage exercises the real solo router, real REST handlers, aggregate services, and the real MCP server transport
+
 Final M5 gate:
 - perform and record at least one successful live-provider run using `docs/PROVIDER_SMOKE.md`; until then the hardening code is complete but M5 is not declared operationally complete
 

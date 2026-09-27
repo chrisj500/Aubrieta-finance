@@ -21,7 +21,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         : { kind: (["week", "month", "quarter", "year", "period"].includes(frameKind) ? frameKind : "period") as "week" | "month" | "quarter" | "year" | "period" };
     const userId = auth.kind === "agent" ? auth.ctx.userId : auth.userId;
     const includePending = req.nextUrl.searchParams.get("includePending") !== "0";
-    const transactions = await createBudgetsService(getDb()).transactions(userId, id, reference, frame, includePending);
+    const transactions = await createBudgetsService(getDb()).transactions(
+      userId, id, reference, frame, includePending, auth.kind === "agent" ? auth.ctx.allowlist : null,
+    );
     return ok({ transactions });
   })(req, ctx);
 }
