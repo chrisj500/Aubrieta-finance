@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { PairingSection } from "@/components/pairing-section";
 import { isSoloCandidate } from "@/lib/mobile-mode";
@@ -75,6 +76,7 @@ const PLAID_TRIAL_URL = "https://dashboard.plaid.com/trial-plan";
 export function OnboardingWizard() {
   const kbdHeight = useKeyboardHeight();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [solo, setSolo] = useState(false);
   const [step, setStep] = useState<Step>("welcome");
   const [busy, setBusy] = useState(false);
@@ -247,7 +249,14 @@ export function OnboardingWizard() {
   async function finish() {
     setBusy(true);
     try {
-      await api.post("/api/onboarding", { action: "complete" });
+      const completed = await api.post<{ completed: boolean; completedAt: string | null }>(
+        "/api/onboarding",
+        { action: "complete" },
+      );
+      // The app shell gates on a cached ["onboarding"] query. Update it before
+      // navigating so completing the wizard cannot immediately render the stale
+      // incomplete state again when /dashboard is already the current route.
+      queryClient.setQueryData(["onboarding"], completed);
       // Warm the solo DB (open + migrate) WHILE the transition happens so the
       // dashboard's first queries hit a ready database instead of paying the
       // cold-open cost (first entry after the wizard was slow).
@@ -283,8 +292,10 @@ export function OnboardingWizard() {
     setErr(null);
     try {
       await api.post("/api/auth/demo");
-      router.push("/dashboard");
-      router.refresh();
+      // Demo login replaces the session cookie. Use a full navigation so cached
+      // ["me"] / ["onboarding"] data from the real account cannot survive the
+      // identity switch.
+      window.location.assign("/dashboard");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Demo unavailable.");
       setBusy(false);
