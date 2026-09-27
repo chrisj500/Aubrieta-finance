@@ -64,6 +64,7 @@ export interface ProviderTransaction {
   categoryPath?: string | null;
   personalFinanceCategory?: string | null;
   merchantCategoryCode?: string | null;
+  isTransfer?: boolean;
   pendingExternalId?: string | null;
 }
 

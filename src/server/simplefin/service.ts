@@ -351,6 +351,7 @@ export function createSimpleFinService(
               personalFinanceCategory: txn.personalFinanceCategory ?? null,
               merchantCategoryCode: txn.merchantCategoryCode ?? null,
               pending: txn.pending,
+              isTransfer: txn.isTransfer === true,
             }, category?.id ?? null);
             if (existing) modified++; else added++;
           }

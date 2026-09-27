@@ -363,6 +363,19 @@ function mapTransaction(
     if (!/^\d{1,4}$/.test(raw)) return null;
     return raw.padStart(4, "0");
   })();
+  const accountType = inferSimpleFinAccountType(
+    account.name?.trim() || account.id,
+    account.extra,
+    account.balance,
+    account["available-balance"],
+  );
+  const transferText = safeProviderMessage(
+    [txn.description, txn.payee, txn.memo].filter(Boolean).join(" "),
+  ).toLowerCase();
+  const isTransfer =
+    accountType === "credit_card" &&
+    amount > 0 &&
+    /(payment|autopay|thank you)/i.test(transferText);
   const postedDate = isoDate(txn.posted || txn.transacted_at, now);
   const authorizedDate = txn.transacted_at ? isoDate(txn.transacted_at, now) : null;
   return {
@@ -380,6 +393,7 @@ function mapTransaction(
     categoryPath: category,
     personalFinanceCategory: null,
     merchantCategoryCode,
+    isTransfer,
   };
 }
 

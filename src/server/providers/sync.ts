@@ -238,6 +238,7 @@ export async function syncProviderConnection(
             personalFinanceCategory: txn.personalFinanceCategory ?? null,
             merchantCategoryCode: txn.merchantCategoryCode ?? null,
             pending: txn.pending,
+            isTransfer: txn.isTransfer === true,
           },
           category?.id ?? null,
         );

@@ -69,6 +69,13 @@ function fixture() {
             description: "STREAMING SVC",
             pending: true,
           },
+          {
+            id: "txn-payment",
+            posted: 1790035200,
+            amount: "450.25",
+            description: "PAYMENT THANK YOU",
+            pending: false,
+          },
         ],
       },
     ],
@@ -154,6 +161,7 @@ describe("SimpleFIN provider", () => {
     expect(r1.added.map((t) => t.amountMinor)).toEqual([-3300, 250000]);
     expect(r1.added[0].merchantCategoryCode).toBe("5812");
     expect(r2.added[0].amountMinor).toBe(-1999);
+    expect(r2.added.find((t) => t.externalId.includes("txn-payment"))?.isTransfer).toBe(true);
     expect(r1.added[0].externalId).not.toBe(r2.added[0].externalId);
     expect(r1.added[0].accountExternalId).not.toBe(r2.added[0].accountExternalId);
     expect(r2.added[0].pending).toBe(true);

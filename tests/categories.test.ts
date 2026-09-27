@@ -66,6 +66,18 @@ describe("categories", () => {
     expect(await svc.matchMcc(user.id, "9998")).toBeNull();
   });
 
+  it("maps high-confidence non-MCC merchant names and card fees", async () => {
+    const db = createTestDb();
+    const user = await seedUser(db, "category-name-fallback");
+    const svc = createCategoriesService(db);
+    await svc.ensureSystem(user.id);
+    expect((await svc.matchByName(user.id, "Papa John's #123"))?.name).toBe("Food & Dining");
+    expect((await svc.matchByName(user.id, "Instacart"))?.name).toBe("Groceries");
+    expect((await svc.matchByName(user.id, "Sprinklerwarehouse"))?.name).toBe("Shopping");
+    expect((await svc.matchByName(user.id, "Interest Charge"))?.name).toBe("Fees & Interest");
+    expect((await svc.matchByName(user.id, "Renewal Membership Fee"))?.name).toBe("Fees & Interest");
+  });
+
   describe("match (longest prefix)", () => {
     it("matches exact personal-finance category", async () => {
       const db = createTestDb();
