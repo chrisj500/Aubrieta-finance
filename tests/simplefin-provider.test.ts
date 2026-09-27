@@ -159,7 +159,7 @@ describe("SimpleFIN provider", () => {
   });
 
 
-  it("caps transaction requests at 90 days and ignores the Bridge capped-range warning", async () => {
+  it("uses a 45-day initial window and ignores Bridge date-range warnings", async () => {
     const seen: URL[] = [];
     const provider = createSimpleFinProvider({
       fetchImpl: async (input) => {
@@ -167,7 +167,9 @@ describe("SimpleFIN provider", () => {
         seen.push(url);
         return json({
           ...fixture(),
-          errors: ["Requested date range exceeds limit of 90 days and was capped."],
+          errors: [
+            "Requested date range exceeds recommended range of 45 days. In the future, this may be capped.",
+          ],
         });
       },
       now: () => new Date("2026-09-26T22:00:00Z"),
@@ -189,10 +191,10 @@ describe("SimpleFIN provider", () => {
     expect(request).toBeDefined();
     const start = Number(request!.searchParams.get("start-date"));
     const end = Number(request!.searchParams.get("end-date"));
-    expect(end - start).toBeLessThanOrEqual(90 * 86_400);
+    expect(end - start).toBeLessThanOrEqual(45 * 86_400);
   });
 
-  it("clamps a stale SimpleFIN cursor so refreshes never exceed the 90-day limit", async () => {
+  it("advances a stale SimpleFIN cursor through 45-day chunks without skipping history", async () => {
     const seen: URL[] = [];
     const provider = createSimpleFinProvider({
       fetchImpl: async (input) => {
@@ -208,13 +210,18 @@ describe("SimpleFIN provider", () => {
       scopeKey: simpleFinScopeKey(ACCESS_URL, "conn-1"),
     };
 
-    await provider.syncTransactions!(secret, { value: "sf1:1" });
+    const result = await provider.syncTransactions!(secret, { value: "sf1:1" });
 
     const request = seen.find((url) => url.searchParams.has("start-date"));
     expect(request).toBeDefined();
     const start = Number(request!.searchParams.get("start-date"));
     const end = Number(request!.searchParams.get("end-date"));
-    expect(end - start).toBeLessThanOrEqual(90 * 86_400);
+    expect(start).toBe(1);
+    expect(end - start).toBeLessThanOrEqual(45 * 86_400);
+
+    const next = Number(result.nextCursor.value?.slice("sf1:".length));
+    expect(next).toBe(end - 5 * 86_400);
+    expect(next).toBeGreaterThan(start);
   });
 
   it("infers common account types and fails closed on unknown names", () => {
