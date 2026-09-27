@@ -36,6 +36,24 @@ describe("transactions", () => {
     expect(rows[0].name).toBe("Starbucks"); // 2026-02-05
   });
 
+
+  it("sorts reversibly by date, vendor, and transaction magnitude", async () => {
+    const { svc, user } = await seed(createTestDb());
+
+    const dateAsc = await svc.list(user.id, { limit: 50, offset: 0, sortBy: "date", sortDir: "asc" });
+    expect(dateAsc.rows.map((r) => r.name)).toEqual(["Rent", "Paycheck", "Starbucks"]);
+
+    const vendorAsc = await svc.list(user.id, { limit: 50, offset: 0, sortBy: "vendor", sortDir: "asc" });
+    expect(vendorAsc.rows.map((r) => r.name)).toEqual(["Paycheck", "Rent", "Starbucks"]);
+    const vendorDesc = await svc.list(user.id, { limit: 50, offset: 0, sortBy: "vendor", sortDir: "desc" });
+    expect(vendorDesc.rows.map((r) => r.name)).toEqual(["Starbucks", "Rent", "Paycheck"]);
+
+    const amountDesc = await svc.list(user.id, { limit: 50, offset: 0, sortBy: "amount", sortDir: "desc" });
+    expect(amountDesc.rows.map((r) => r.name)).toEqual(["Paycheck", "Rent", "Starbucks"]);
+    const amountAsc = await svc.list(user.id, { limit: 50, offset: 0, sortBy: "amount", sortDir: "asc" });
+    expect(amountAsc.rows.map((r) => r.name)).toEqual(["Starbucks", "Rent", "Paycheck"]);
+  });
+
   it("filters by account", async () => {
     const { svc, user, acc } = await seed(createTestDb());
     const { rows } = await svc.list(user.id, { limit: 50, offset: 0, accountId: acc });

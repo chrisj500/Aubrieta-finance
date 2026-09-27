@@ -38,6 +38,8 @@ export interface TransactionFilters {
   review?: boolean; // true = "needs your review": Plaid pulled but never confirmed by a human
   q?: string;
   pendingOnly?: boolean;
+  sortBy?: "date" | "vendor" | "amount";
+  sortDir?: "asc" | "desc";
   limit: number;
   offset: number;
 }
@@ -105,13 +107,21 @@ export function createTransactionsService(db: Db = getDb()) {
         `SELECT COUNT(*) AS c FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE ${whereSql}`,
         ...params
       );
+      const sortDir = f.sortDir === "asc" ? "ASC" : "DESC";
+      const orderBy =
+        f.sortBy === "vendor"
+          ? `COALESCE(NULLIF(TRIM(t.merchant_name), ''), t.name) COLLATE NOCASE ${sortDir}, t.date DESC, t.created_at DESC, t.id ASC`
+          : f.sortBy === "amount"
+            ? `ABS(t.amount_cents) ${sortDir}, t.date DESC, t.created_at DESC, t.id ASC`
+            : `t.date ${sortDir}, t.created_at ${sortDir}, t.id ${sortDir}`;
+
       const rows = await db.all<TransactionRow>(
         `SELECT t.*, a.name AS account_name, c.name AS category_name, c.color AS category_color
            FROM transactions t
            JOIN accounts a ON a.id = t.account_id
            LEFT JOIN categories c ON c.id = t.user_category_id
           WHERE ${whereSql}
-          ORDER BY t.date DESC, t.created_at DESC
+          ORDER BY ${orderBy}
           LIMIT ? OFFSET ?`,
         ...params,
         f.limit,

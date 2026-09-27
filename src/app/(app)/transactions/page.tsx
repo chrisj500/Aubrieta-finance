@@ -6,7 +6,10 @@ import { useEscapeToClose } from "@/lib/use-escape-to-close";
 import { useDialogA11y } from "@/lib/use-dialog-a11y";
 import Link from "next/link";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, X, Trash2, Pencil, ChevronDown, RefreshCw, Upload } from "lucide-react";
+import {
+  Search, X, Trash2, Pencil, ChevronDown, RefreshCw, Upload,
+  CalendarDays, ALargeSmall, DollarSign, ArrowUp, ArrowDown,
+} from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Page, PageHeader } from "@/components/ui/page";
@@ -45,6 +48,14 @@ interface Category {
 }
 
 const UNCATEGORIZED_FILTER = "__uncategorized__";
+type TransactionSortBy = "date" | "vendor" | "amount";
+type TransactionSortDir = "asc" | "desc";
+
+const DEFAULT_SORT_DIR: Record<TransactionSortBy, TransactionSortDir> = {
+  date: "desc",
+  vendor: "asc",
+  amount: "desc",
+};
 
 function RowSkeleton() {
   return (
@@ -66,6 +77,8 @@ export default function TransactionsPage() {
   const [q, setQ] = useState("");
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [sortBy, setSortBy] = useState<TransactionSortBy>("date");
+  const [sortDir, setSortDir] = useState<TransactionSortDir>("desc");
 
   useEffect(() => {
     const url = new URLSearchParams(window.location.search);
@@ -73,11 +86,18 @@ export default function TransactionsPage() {
     const categoryFromUrl = url.get("categoryId");
     const fromUrl = url.get("from");
     const toUrl = url.get("to");
+    const sortFromUrl = url.get("sort");
+    const dirFromUrl = url.get("dir");
     if (accountFromUrl) setAccountId(accountFromUrl);
     if (url.get("uncategorized") === "1") setCategoryId(UNCATEGORIZED_FILTER);
     else if (categoryFromUrl) setCategoryId(categoryFromUrl);
     if (fromUrl) setFrom(fromUrl);
     if (toUrl) setTo(toUrl);
+    if (sortFromUrl === "date" || sortFromUrl === "vendor" || sortFromUrl === "amount") {
+      setSortBy(sortFromUrl);
+      if (dirFromUrl === "asc" || dirFromUrl === "desc") setSortDir(dirFromUrl);
+      else setSortDir(DEFAULT_SORT_DIR[sortFromUrl]);
+    }
   }, []);
   const [pendingOnly, setPendingOnly] = useState(false);
   const [from, setFrom] = useState("");
@@ -130,8 +150,10 @@ export default function TransactionsPage() {
     if (pendingOnly) p.set("pending", "1");
     if (from) p.set("from", from);
     if (to) p.set("to", to);
+    p.set("sort", sortBy);
+    p.set("dir", sortDir);
     return p.toString();
-  }, [debouncedQ, accountId, categoryId, pendingOnly, from, to]);
+  }, [debouncedQ, accountId, categoryId, pendingOnly, from, to, sortBy, sortDir]);
 
   // Paginated via offset (server clamps `limit` to 200, so growing `limit`
   // never revealed more rows — switch to cursor-style offset pages instead).
@@ -401,6 +423,30 @@ export default function TransactionsPage() {
     onError: (e) => setError(e instanceof Error ? e.message : "CSV import failed."),
   });
 
+  const sortDirectionLabel = (field: TransactionSortBy, dir: TransactionSortDir) => {
+    if (field === "date") return dir === "desc" ? "newest first" : "oldest first";
+    if (field === "vendor") return dir === "asc" ? "A to Z" : "Z to A";
+    return dir === "desc" ? "largest first" : "smallest first";
+  };
+
+  const applySort = (field: TransactionSortBy) => {
+    const nextDir = field === sortBy
+      ? (sortDir === "asc" ? "desc" : "asc")
+      : DEFAULT_SORT_DIR[field];
+    setSortBy(field);
+    setSortDir(nextDir);
+
+    const url = new URL(window.location.href);
+    if (field === "date" && nextDir === "desc") {
+      url.searchParams.delete("sort");
+      url.searchParams.delete("dir");
+    } else {
+      url.searchParams.set("sort", field);
+      url.searchParams.set("dir", nextDir);
+    }
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  };
+
   const hasFilters = Boolean(q || accountId || categoryId || pendingOnly || from || to);
   const filterCount = [q.trim(), accountId, categoryId, pendingOnly ? "pending" : "", from, to].filter(Boolean).length;
   const clearFilters = () => {
@@ -411,7 +457,13 @@ export default function TransactionsPage() {
     setPendingOnly(false);
     setFrom("");
     setTo("");
-    window.history.replaceState(null, "", "/transactions");
+    const sortParams = new URLSearchParams();
+    if (!(sortBy === "date" && sortDir === "desc")) {
+      sortParams.set("sort", sortBy);
+      sortParams.set("dir", sortDir);
+    }
+    const sortQuery = sortParams.toString();
+    window.history.replaceState(null, "", `/transactions${sortQuery ? `?${sortQuery}` : ""}`);
   };
 
   return (
@@ -524,6 +576,43 @@ export default function TransactionsPage() {
             </div>
             <div className="min-w-36 flex-1 sm:flex-none">
               <CustomDatePicker ariaLabel="To date" value={to} onChange={setTo} min={from || undefined} />
+            </div>
+            <div
+              role="group"
+              aria-label="Sort transactions"
+              className="flex h-10 shrink-0 items-center rounded-xl border border-border bg-surface p-1"
+            >
+              {([
+                { field: "date" as const, label: "Date", Icon: CalendarDays },
+                { field: "vendor" as const, label: "Vendor", Icon: ALargeSmall },
+                { field: "amount" as const, label: "Amount", Icon: DollarSign },
+              ]).map(({ field, label, Icon }) => {
+                const active = sortBy === field;
+                const direction = active ? sortDir : DEFAULT_SORT_DIR[field];
+                const directionLabel = sortDirectionLabel(field, direction);
+                return (
+                  <button
+                    key={field}
+                    type="button"
+                    aria-pressed={active}
+                    aria-label={`Sort by ${label.toLowerCase()}, ${directionLabel}`}
+                    title={`${label} · ${directionLabel}`}
+                    onClick={() => applySort(field)}
+                    className={`relative flex h-8 w-10 items-center justify-center rounded-lg transition-colors ${
+                      active
+                        ? "bg-accent/15 text-accent-text"
+                        : "text-text-muted hover:bg-surface-muted hover:text-text"
+                    }`}
+                  >
+                    <Icon size={16} aria-hidden />
+                    {active && (
+                      sortDir === "asc"
+                        ? <ArrowUp size={10} className="absolute right-1 top-1" aria-hidden />
+                        : <ArrowDown size={10} className="absolute right-1 top-1" aria-hidden />
+                    )}
+                  </button>
+                );
+              })}
             </div>
             {hasFilters && (
               <button
