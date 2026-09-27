@@ -15,6 +15,7 @@ const listSchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   categoryId: z.string().optional(),
+  uncategorized: z.coerce.boolean().optional(),
   q: z.string().optional(),
   pending: z.coerce.boolean().optional(),
   review: z.coerce.boolean().optional(),
@@ -52,6 +53,7 @@ export async function GET(req: NextRequest) {
       : undefined;
     const filters = {
       ...parsed.data,
+      categoryId: parsed.data.uncategorized === true ? null : parsed.data.categoryId,
       review: parsed.data.review === true,
       accountIds: agentAccountIds,
       pendingOnly: parsed.data.pending === true,
