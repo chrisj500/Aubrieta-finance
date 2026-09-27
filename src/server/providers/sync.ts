@@ -113,7 +113,7 @@ export async function syncProviderConnection(
            item_id, plaid_account_id, name, official_name, type,
            subtype, mask, current_balance_cents, available_balance_cents,
            currency, created_at
-         ) VALUES (?, ?, ?, ?, 'shared', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, 'private', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         accountId,
         input.userId,
         household?.householdId ?? null,
@@ -238,6 +238,7 @@ export async function syncProviderConnection(
             personalFinanceCategory: txn.personalFinanceCategory ?? null,
             merchantCategoryCode: txn.merchantCategoryCode ?? null,
             pending: txn.pending,
+            isTransfer: txn.isTransfer === true,
           },
           category?.id ?? null,
         );

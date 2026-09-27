@@ -69,6 +69,13 @@ function fixture() {
             description: "STREAMING SVC",
             pending: true,
           },
+          {
+            id: "txn-payment",
+            posted: 1790035200,
+            amount: "450.25",
+            description: "PAYMENT THANK YOU",
+            pending: false,
+          },
         ],
       },
     ],
@@ -154,6 +161,7 @@ describe("SimpleFIN provider", () => {
     expect(r1.added.map((t) => t.amountMinor)).toEqual([-3300, 250000]);
     expect(r1.added[0].merchantCategoryCode).toBe("5812");
     expect(r2.added[0].amountMinor).toBe(-1999);
+    expect(r2.added.find((t) => t.externalId.includes("txn-payment"))?.isTransfer).toBe(true);
     expect(r1.added[0].externalId).not.toBe(r2.added[0].externalId);
     expect(r1.added[0].accountExternalId).not.toBe(r2.added[0].accountExternalId);
     expect(r2.added[0].pending).toBe(true);
@@ -224,6 +232,23 @@ describe("SimpleFIN provider", () => {
     const next = Number(result.nextCursor.value?.slice("sf1:".length));
     expect(next).toBe(end - 5 * 86_400);
     expect(next).toBeGreaterThan(start);
+  });
+
+
+  it("promotes generic cardholder labels only inside a clearly card-heavy connection", async () => {
+    const provider = createSimpleFinProvider({
+      fetchImpl: async () => json({
+        accounts: [
+          { id: "a1", conn_id: "conn-1", name: "Chase Sapphire Preferred (7781)", balance: "-12.11", "available-balance": "5000" },
+          { id: "a2", conn_id: "conn-1", name: "Freedom Unlimited (2291)", balance: "0", "available-balance": "5000" },
+          { id: "a3", conn_id: "conn-1", name: "C. JACKSON (0769)", balance: "0", "available-balance": "0" },
+          { id: "a4", conn_id: "conn-1", name: "General Operations (2217)", balance: "2.17", "available-balance": "2.17" },
+        ],
+      }),
+    });
+    const accounts = await provider.listAccounts({ accessUrl: ACCESS_URL, remoteConnectionId: "conn-1", scopeKey: "scope-1" });
+    expect(accounts.find((a) => a.name === "C. JACKSON (0769)")?.type).toBe("credit_card");
+    expect(accounts.find((a) => a.name === "General Operations (2217)")?.type).toBe("other");
   });
 
   it("infers common account types and fails closed on unknown names", () => {

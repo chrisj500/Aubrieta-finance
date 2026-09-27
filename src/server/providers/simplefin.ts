@@ -281,9 +281,39 @@ function normalizedCurrency(raw: string | undefined): string {
   return /^[A-Za-z]{3}$/.test(value) ? value.toUpperCase() : value.slice(0, 100) || "USD";
 }
 
-function mapAccount(account: SimpleFinAccount, secret: SimpleFinConnectionSecret): ProviderAccount {
+function looksLikeCardholderAccountName(name: string): boolean {
+  // Some issuers expose generic card labels such as "C. JACKSON (0769)"
+  // instead of the product name. Do not classify this shape alone; it is only
+  // promoted when the same SimpleFIN connection already contains multiple
+  // independently recognized credit cards.
+  return /^[A-Z](?:\.[A-Z])*\.?\s+[A-Z][A-Z' -]+\s+\(\d{4}\)$/i.test(name.trim());
+}
+
+function inferConnectionAccountTypes(accounts: SimpleFinAccount[]): NormalizedAccountType[] {
+  const initial = accounts.map((account) =>
+    inferSimpleFinAccountType(
+      account.name?.trim() || account.id,
+      account.extra,
+      account.balance,
+      account["available-balance"],
+    ),
+  );
+  const recognizedCards = initial.filter((type) => type === "credit_card").length;
+  if (recognizedCards < 2) return initial;
+  return initial.map((type, index) =>
+    type === "other" && looksLikeCardholderAccountName(accounts[index]?.name ?? "")
+      ? "credit_card"
+      : type,
+  );
+}
+
+function mapAccount(
+  account: SimpleFinAccount,
+  secret: SimpleFinConnectionSecret,
+  resolvedType?: NormalizedAccountType,
+): ProviderAccount {
   const name = account.name?.trim() || account.id;
-  const type = inferSimpleFinAccountType(
+  const type = resolvedType ?? inferSimpleFinAccountType(
     name,
     account.extra,
     account.balance,
@@ -333,6 +363,19 @@ function mapTransaction(
     if (!/^\d{1,4}$/.test(raw)) return null;
     return raw.padStart(4, "0");
   })();
+  const accountType = inferSimpleFinAccountType(
+    account.name?.trim() || account.id,
+    account.extra,
+    account.balance,
+    account["available-balance"],
+  );
+  const transferText = safeProviderMessage(
+    [txn.description, txn.payee, txn.memo].filter(Boolean).join(" "),
+  ).toLowerCase();
+  const isTransfer =
+    accountType === "credit_card" &&
+    amount > 0 &&
+    /(payment|autopay|thank you)/i.test(transferText);
   const postedDate = isoDate(txn.posted || txn.transacted_at, now);
   const authorizedDate = txn.transacted_at ? isoDate(txn.transacted_at, now) : null;
   return {
@@ -350,6 +393,7 @@ function mapTransaction(
     categoryPath: category,
     personalFinanceCategory: null,
     merchantCategoryCode,
+    isTransfer,
   };
 }
 
@@ -546,7 +590,9 @@ export function createSimpleFinProvider(options: SimpleFinProviderOptions = {}):
       }
       const set = await fetchAccountSet(secret.accessUrl, { balancesOnly: true });
       checkErrors(set, secret.remoteConnectionId);
-      return relevantAccounts(set, secret.remoteConnectionId).map((a) => mapAccount(a, secret));
+      const accounts = relevantAccounts(set, secret.remoteConnectionId);
+      const types = inferConnectionAccountTypes(accounts);
+      return accounts.map((account, index) => mapAccount(account, secret, types[index]));
     },
 
     async syncTransactions(connectionSecret, cursor): Promise<ProviderTransactionSync> {
