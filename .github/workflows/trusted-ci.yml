@@ -2,7 +2,7 @@ name: trusted-ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, verify/stage06-runners-20261124]
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
